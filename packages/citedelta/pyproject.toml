@@ -7,6 +7,7 @@ dependencies = [
     "substrate",
     "alembic>=1.14",
     "asyncpg>=0.30",
+    "greenlet>=3.1",
     "httpx>=0.28",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
