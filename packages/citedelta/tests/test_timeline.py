@@ -35,7 +35,7 @@ def test_consecutive_versions_close_each_other() -> None:
 
 def test_duplicate_valid_dates_collapse_keeping_earliest_issue() -> None:
     """28 such duplicates exist in part 214. Without this the partial unique
-    index in Block 1 rejects the second insert and ingestion dies."""
+    index rejects the second insert and ingestion dies."""
     tl = build_timelines(
         [
             _rec("214.11", "2020-10-02", "2022-01-05"),

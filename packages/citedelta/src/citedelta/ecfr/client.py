@@ -40,7 +40,7 @@ class ECFRClient:
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
             timeout=timeout,
-            headers={"User-Agent": "CiteDelta/0.1 (portfolio project; contact via GitHub)"},
+            headers={"User-Agent": "CiteDelta/0.1 (contact via GitHub)"},
             follow_redirects=True,
         )
         self._last_request = 0.0

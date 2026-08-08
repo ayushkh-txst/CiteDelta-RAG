@@ -270,10 +270,11 @@ class LexicalIndex:
         """Top-k by BM25.
 
         `allowed` is a deliberate naive post-filter over external chunk ids:
-        candidates are scored first, then discarded. It works for BM25 because
-        you can always widen k. It is catastrophic for approximate vector
-        search, where the k nearest neighbours can all be inadmissible and
-        widening k doesn't save you. Measuring that is Day 3.
+                candidates are scored first, then discarded. It works for BM25 because
+                you can always widen k. It is catastrophic for approximate vector
+                search, where the k nearest neighbours can all be inadmissible and
+                widening k doesn't save you. That cost is measured in the vector-index
+                benchmark rather than assumed.
         """
         terms = tokenize(query)
         if not terms:

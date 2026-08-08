@@ -1,7 +1,7 @@
-"""Snapshot ingestion. Block 2 version: a for loop.
+"""Snapshot ingestion.
 
-Block 4 replaces the loop with a job queue and reuses everything else in this
-file unchanged. That is the point of writing it this way first.
+Starts as a single for-loop driver, then the loop is replaced by a job queue
+while everything else in this file stays unchanged. That ordering is the point.
 """
 
 from __future__ import annotations

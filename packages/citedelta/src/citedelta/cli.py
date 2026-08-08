@@ -94,7 +94,9 @@ def index_build() -> None:
 def search(
     query: str,
     k: int = typer.Option(10, "-k"),
-    as_of: str = typer.Option(None, "--as-of", help="YYYY-MM-DD; post-filter (Day 3 fixes this)"),
+    as_of: str = typer.Option(
+        None, "--as-of", help="YYYY-MM-DD; post-filter (temporal pushdown is planned)"
+    ),
 ) -> None:
     """Search the lexical index."""
     from citedelta.index.build import LEXICAL_INDEX_FILENAME

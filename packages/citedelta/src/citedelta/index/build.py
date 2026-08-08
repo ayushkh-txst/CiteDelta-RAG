@@ -24,7 +24,8 @@ async def build_lexical_index(path: Path | None = None) -> BuildStats:
     project exists to answer.
 
     The index therefore holds several versions of near-identical text, and a
-    naive search returns all of them. Filtering by validity is Day 3's job.
+    naive search returns all of them. Filtering by validity is planned as an
+    indexed pushdown.
     """
     settings = get_settings()
     target = path or (settings.index_dir / LEXICAL_INDEX_FILENAME)

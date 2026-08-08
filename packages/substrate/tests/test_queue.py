@@ -138,10 +138,10 @@ async def test_a_job_that_kills_its_worker_still_reaches_the_dlq(
 async def test_concurrent_workers_never_double_claim(clean_db: Database) -> None:
     """8 workers, 200 jobs. Every job claimed exactly once.
 
-    This is the whole reason Block 3 exists before Block 4. If SKIP LOCKED is
-    wrong, or the lock and the UPDATE aren't one statement, two workers
-    process the same job — and in Block 4 that means the same snapshot
-    ingested twice, silently. Real sleeping, real row locks, no mocking.
+    This is the raison d'être of the queue: if SKIP LOCKED is wrong, or the
+    lock and the UPDATE aren't one statement, two workers process the same
+    job — which means the same snapshot ingested twice, silently. Real
+    sleeping, real row locks, no mocking.
     """
     total_jobs = 200
     workers = 8

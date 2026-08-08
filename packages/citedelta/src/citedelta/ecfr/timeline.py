@@ -15,7 +15,7 @@ def build_timelines(records: list[VersionRecord]) -> dict[str, list[SectionInter
     1. some (section, effective_from) pairs appear more than once — eCFR
        re-records the same amendment at a later issue_date. Valid time is what
        identifies a version, so collapse duplicates and keep the earliest
-       issue_date, or the partial unique index in Block 1 rejects the insert.
+       issue_date, or the partial unique index rejects the insert.
     2. A record can be flagged `removed` — that's a tombstone, not an error.
        The section still gets an interval so 'in force in 2020?' returns
        nothing for it.

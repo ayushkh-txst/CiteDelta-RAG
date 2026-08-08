@@ -1,4 +1,4 @@
--- Block 4: as-of query plan against the POPULATED corpus.
+-- AS-OF query plan against the POPULATED corpus.
 -- Compare with asof-empty.sql.
 --
 -- 147 section_versions / 38,211 chunks. The planner prefers a seq scan here:

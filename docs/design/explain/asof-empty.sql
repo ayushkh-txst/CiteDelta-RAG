@@ -7,9 +7,9 @@ WHERE sv.document_id = 1
   AND sv.superseded_at IS NULL
   AND NOT sv.removed;
 
--- Ran against an empty corpus (Block 1). Tables are empty so the planner is
+-- Ran against an empty corpus. Tables are empty so the planner is
 -- right to lean on the tiny indexes; see asof-populated.sql for the populated
--- version at the end of Block 4.
+-- variant.
 
  Nested Loop  (cost=4.31..19.47 rows=1 width=72) (actual time=0.316..0.317 rows=1 loops=1)
    Buffers: shared hit=55 dirtied=2

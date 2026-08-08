@@ -187,7 +187,7 @@ class CorpusStore:
                     c.citation_path,
                     c.text,
                     len(c.text),
-                    len(c.text.split()),  # placeholder; real tokenizer in Block 5
+                    len(c.text.split()),  # placeholder; tokenizer lives in the index package
                     sha256(c.text.encode()).digest(),
                 )
                 for c in chunks
