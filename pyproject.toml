@@ -53,6 +53,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "packages/*/tests/**" = ["S", "ANN", "PLR2004"]
 "alembic/**" = ["ANN", "E501", "I"]
+"chaos/**" = ["S", "T201", "ASYNC251"]   # chaos scripts spawn processes and print
 
 # ---------------------------------------------------------------- mypy
 

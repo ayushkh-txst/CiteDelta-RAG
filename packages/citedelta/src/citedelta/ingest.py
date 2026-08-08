@@ -6,6 +6,8 @@ file unchanged. That is the point of writing it this way first.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
 from hashlib import sha256
@@ -19,6 +21,7 @@ from citedelta.ecfr.parse import parse_part
 from citedelta.ecfr.timeline import build_timelines, interval_covering
 from citedelta.store.corpus import CorpusStore
 from substrate.db import Database
+from substrate.queue import ClaimedJob, JobQueue, JobSpec, Worker
 
 log = structlog.get_logger(__name__)
 
@@ -37,56 +40,18 @@ class IngestStats:
     sections_skipped: int = 0  # no interval covers this date — corpus horizon
 
 
-async def ingest_snapshot(
-    db: Database,
-    client: ECFRClient,
-    document_id: int,
-    timelines: dict[str, list[SectionInterval]],
-    on: date,
-    stats: IngestStats,
-) -> None:
-    """Ingest every section as it stood on one date.
+QUEUE_NAME = "ingest"
+KIND_SNAPSHOT = "snapshot"
 
-    A snapshot is the complete text in force, so ingesting one date yields a
-    complete corpus for that date. That makes the operation idempotent and
-    order-independent — exactly what a job queue needs from it.
+
+async def plan_ingest(dates: list[date] | None = None) -> int:
+    """Resolve the work, then enqueue it. Returns the number of jobs created.
+
+    Runs ONCE, in the process you type the command into — not in a worker.
+    Discovery is cheap, needs no durability, and doing it here means a worker
+    never has to know how to find work, only how to do it.
     """
-    xml = await client.snapshot_xml(TITLE, PART, on)
-    sections = parse_part(xml, citation_prefix=CITATION_PREFIX)
-
-    async with db.acquire() as conn, conn.transaction():
-        store = CorpusStore(conn)
-        for parsed in sections:
-            interval = interval_covering(timelines, parsed.section, on)
-            if interval is None:
-                stats.sections_skipped += 1
-                continue
-
-            body = "\n".join(c.text for c in parsed.chunks)
-            sv_id, created = await store.insert_section_version(
-                document_id, interval, parsed.heading, sha256(body.encode()).digest()
-            )
-            if not created:
-                stats.versions_existing += 1
-                continue
-
-            stats.versions_created += 1
-            stats.chunks_written += await store.insert_chunks(sv_id, parsed.chunks)
-
-    stats.snapshots += 1
-    log.info(
-        "snapshot.ingested",
-        date=str(on),
-        sections=len(sections),
-        created=stats.versions_created,
-        chunks=stats.chunks_written,
-    )
-
-
-async def ingest_dates(dates: list[date]) -> IngestStats:
-    """The Block 2 driver. One process, one loop, no recovery."""
     settings = get_settings()
-    stats = IngestStats()
 
     async with (
         Database.open(settings.database_url) as db,
@@ -98,14 +63,115 @@ async def ingest_dates(dates: list[date]) -> IngestStats:
                 "ecfr", "Electronic Code of Federal Regulations", "https://www.ecfr.gov"
             )
             document_id = await store.upsert_document(
-                source_id, EXTERNAL_ID, "Nonimmigrant Classes", f"{CITATION_PREFIX} Part {PART}"
+                source_id,
+                EXTERNAL_ID,
+                "Nonimmigrant Classes",
+                f"{CITATION_PREFIX} Part {PART}",
             )
 
         records = await client.versions(TITLE, PART)
         timelines = build_timelines(records)
-        log.info("timelines.built", sections=len(timelines), records=len(records))
+        targets = sorted(dates) if dates else sorted({r.effective_from for r in records})
 
-        for on in sorted(dates):
-            await ingest_snapshot(db, client, document_id, timelines, on, stats)
+        specs: list[JobSpec] = []
+        for on in targets:
+            intervals = [
+                iv.model_dump(mode="json")
+                for section in timelines
+                if (iv := interval_covering(timelines, section, on)) is not None
+            ]
+            specs.append(
+                JobSpec(
+                    kind=KIND_SNAPSHOT,
+                    queue=QUEUE_NAME,
+                    # The natural key for this work is the date, so that IS the
+                    # idempotency key. Enqueue twice, get one job.
+                    idempotency_key=f"{EXTERNAL_ID}@{on.isoformat()}",
+                    max_attempts=4,
+                    payload={
+                        "on": on.isoformat(),
+                        "document_id": document_id,
+                        "intervals": intervals,
+                    },
+                )
+            )
+
+        queue = JobQueue(db, queue=QUEUE_NAME)
+        created = await queue.enqueue_many(specs)
+
+    log.info("ingest.planned", targets=len(targets), created=created)
+    return created
+
+
+def make_snapshot_handler(
+    db: Database, client: ECFRClient, stats: IngestStats
+) -> Callable[[ClaimedJob], Awaitable[None]]:
+    """Bind long-lived resources once; the queue hands over one job at a time."""
+
+    async def handle(job: ClaimedJob) -> None:
+        on = date.fromisoformat(str(job.payload["on"]))
+        document_id = int(job.payload["document_id"])
+        intervals = [SectionInterval.model_validate(d) for d in job.payload["intervals"]]
+        by_section = {iv.section: iv for iv in intervals}
+
+        xml = await client.snapshot_xml(TITLE, PART, on)
+
+        # parse_part is pure CPU on ~1 MB of XML — hundreds of milliseconds.
+        # Running it inline would freeze the event loop, stalling every other
+        # slot in this worker AND its heartbeats, which is how a healthy worker
+        # loses its own leases. to_thread hands it to the thread pool so the
+        # loop keeps breathing.
+        sections = await asyncio.to_thread(parse_part, xml, citation_prefix=CITATION_PREFIX)
+
+        async with db.acquire() as conn, conn.transaction():
+            store = CorpusStore(conn)
+            for parsed in sections:
+                interval = by_section.get(parsed.section)
+                if interval is None:
+                    stats.sections_skipped += 1
+                    continue
+                body = "\n".join(c.text for c in parsed.chunks)
+                sv_id, created = await store.insert_section_version(
+                    document_id,
+                    interval,
+                    parsed.heading,
+                    sha256(body.encode()).digest(),
+                )
+                if not created:
+                    stats.versions_existing += 1
+                    continue
+                stats.versions_created += 1
+                stats.chunks_written += await store.insert_chunks(sv_id, parsed.chunks)
+
+        stats.snapshots += 1
+
+    return handle
+
+
+async def run_ingest_worker(*, concurrency: int = 2, drain: bool = True) -> IngestStats:
+    settings = get_settings()
+    stats = IngestStats()
+
+    async with (
+        Database.open(settings.database_url, max_size=concurrency + 4) as db,
+        ECFRClient(settings.raw_cache_dir) as client,
+    ):
+        queue = JobQueue(
+            db,
+            queue=QUEUE_NAME,
+            # Comfortably longer than one snapshot takes; heartbeats extend it
+            # for anything slower.
+            visibility_timeout=90.0,
+            retry_base=1.0,
+            retry_cap=30.0,
+        )
+        worker = Worker(queue, concurrency=concurrency, poll_interval=0.2, heartbeat_interval=15.0)
+        worker.install_signal_handlers()
+        worker.register(KIND_SNAPSHOT, make_snapshot_handler(db, client, stats))
+
+        if drain:
+            await worker.run_until_idle()
+        else:
+            await worker.run_forever()
 
     return stats
