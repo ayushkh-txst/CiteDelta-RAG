@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: citedelta-pg
+    environment:
+      POSTGRES_USER: citedelta
+      POSTGRES_PASSWORD: citedelta
+      POSTGRES_DB: citedelta
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U citedelta -d citedelta"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    command:
+      - postgres
+      - -c
+      - log_min_duration_statement=200
+      - -c
+      - max_connections=100
+
+volumes:
+  pgdata:
