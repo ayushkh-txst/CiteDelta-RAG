@@ -46,6 +46,11 @@ async def db() -> AsyncIterator[Database]:
 @pytest.fixture
 async def clean_db(db: Database) -> AsyncIterator[Database]:
     """Empty corpus tables. Tests must not depend on each other's leftovers."""
-    async with db.acquire() as conn:
-        await conn.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
+
+    async def _truncate() -> None:
+        async with db.acquire() as conn:
+            await conn.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
+
+    await _truncate()
     yield db
+    await _truncate()
