@@ -15,7 +15,7 @@ from substrate.db import Database
 ROOT = Path(__file__).parent
 DSN = os.environ.get("DATABASE_URL", "postgresql://citedelta:citedelta@localhost:5434/citedelta")
 
-TABLES = ("chunks", "section_versions", "documents", "sources")
+TABLES = ("jobs", "chunks", "section_versions", "documents", "sources")
 
 
 @pytest.fixture(scope="session", autouse=True)
