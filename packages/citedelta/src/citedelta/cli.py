@@ -221,6 +221,27 @@ def bench_run(
     typer.echo(as_markdown(results))
 
 
+@bench_app.command("plot")
+def bench_plot(
+    results: list[str] = typer.Option(  # noqa: B008
+        None, "--results", help="Result JSON files. Defaults to docs/design/benchmarks/*.json"
+    ),
+    out: str = typer.Option("docs/design/benchmarks/recall-vs-qps.png", "--out"),
+) -> None:
+    """Render the recall-vs-QPS plot."""
+    from pathlib import Path
+
+    from citedelta.bench.plot import plot_results
+
+    paths = (
+        [Path(r) for r in results]
+        if results
+        else sorted(Path("docs/design/benchmarks").glob("*.json"))
+    )
+    plot_results(paths, Path(out), title="CiteDelta — hand-written ANN indexes")
+    typer.echo(f"wrote {out}")
+
+
 @app.command("search")
 def search(
     query: str,

@@ -28,7 +28,7 @@ class LocalEmbeddings:
       worth publishing.
     * $0, and no key in the query path.
     * Quality is genuinely lower than a frontier embedding model. That's a
-      real cost, quantified on Day 4 rather than hand-waved.
+      real cost, quantified in the service load test rather than hand-waved.
     """
 
     def __init__(self, model_id: str = DEFAULT_MODEL, *, threads: int | None = None) -> None:

@@ -43,7 +43,7 @@ are all inadmissible.
 |---|---|---|
 | NFR-1 | p95 end-to-end query < 200 ms at 50 QPS, 4 vCPU | not yet measured |
 | NFR-2 | Lexical search p95 < 10 ms at 38,211 chunks | **measured: p95 8.9 ms** |
-| NFR-3 | Recall@10 ≥ 0.95 vs. the brute-force oracle | planned |
+| NFR-3 | Recall@10 ≥ 0.95 vs. the brute-force oracle | **measured: 1.000 (IVF-Flat nprobe=32; HNSW ef=32 on dedup)** |
 | NFR-4 | Citation validity = 1.00 (a fabricated citation is a hard failure) | planned |
 | NFR-5 | Ingestion resumes from worker loss with no duplication or loss | **proved** (`chaos/kill_worker_mid_ingest.py`) |
 | NFR-6 | Full rebuild from empty database in < 10 min, cache warm | **measured: 2.8 s ingest + 2.5 s index** |
@@ -65,35 +65,36 @@ Varint + delta-gap encoding vs. fixed-width u32 pairs: **3.81×** smaller.
 Vocabulary 4,872 terms; the dictionary is resident, the postings blob is mmap'd.
 Search latency over the full corpus: **p50 5.2 ms · p95 8.9 ms · p99 9.0 ms**.
 
-**Vector index, projected.** Embeddings are `BAAI/bge-small-en-v1.5`, 384-dim,
+**Vector index, measured.** Embeddings are `BAAI/bge-small-en-v1.5`, 384-dim,
 run locally via ONNX — chosen over a hosted API so the benchmark is
 *reproducible*, and a hosted model that silently reversions makes recall
 numbers incomparable across runs.
 
-```
-float32   38,211 × 384 × 4 B = 58.7 MB
-float16   38,211 × 384 × 2 B = 29.3 MB
-int8      38,211 × 384 × 1 B = 14.7 MB   (+ rescoring pass; recall cost to be measured)
-```
+### Measured (this corpus)
 
-HNSW graph, M = 16:
+| | |
+|---|---|
+| chunks | 38,211 |
+| distinct texts | 1,761 (duplicate ratio 21.7×) |
+| intrinsic dimensionality | 1.1 |
+| float32 vectors, 384-dim | 58.7 MB |
+| brute-force index | 58.2 MB |
+| IVF-Flat (+ 194 centroids) | 58.5 MB |
+| HNSW (922,562 edges × 4 B) | 62.0 MB |
+| HNSW build time | 291 s |
+| embedding wall time (cold / cached) | ~4.5 min / 0 min |
 
-```
-layer 0 ≤ 2M = 32 neighbours × 4 B          = 128 B/node
-upper layers ≈ 1/(1 − 1/e) ≈ 1.58× overhead ≈ 70 B/node
-                                             ≈ 200 B/node
-38,211 nodes × 200 B                        ≈ 7.6 MB
-```
+The dominant cost is the vectors themselves; the HNSW graph adds roughly 6% on
+top of the raw vectors. Everything is resident on a 4 GB VPS with room to
+spare, so the design may assume no paging.
 
-At today's 38,211 chunks the float32 vectors are ~59 MB — **the entire index is
-memory-resident on a 4 GB VPS**, so the design may assume no paging and no
-disk-based ANN structure.
+### Projection to 10M chunks
 
-**What changes at 10M chunks:** float32 vectors alone are 15.4 GB, past any
-cheap single node. In order: int8 quantization with rescoring (3.8 GB), then
-sharding by time range — which this corpus makes natural, since a query already
-names a date and most queries name a recent one. That partition key falls out
-of the domain rather than being imposed on it.
+float32 vectors alone: 10M × 384 × 4 = **15.4 GB** — past any cheap single
+node. In order: int8 scalar quantization with a rescoring pass (3.8 GB), then
+sharding by time range, which this corpus makes natural — a query already
+names a date and most name a recent one. The partition key falls out of the
+domain rather than being imposed on it.
 
 ## 5–10
 

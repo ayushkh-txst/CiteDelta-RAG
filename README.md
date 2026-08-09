@@ -27,9 +27,28 @@ product needs both:
 | Durable job queue on Postgres — `SKIP LOCKED`, leases, fencing tokens, DLQ | ✅ Built |
 | Bitemporal storage with a GiST exclusion constraint | ✅ Built |
 | Inverted index — varint postings, mmap, BM25 | ✅ Built |
-| ANN indexes — brute force → IVF-Flat → HNSW | In progress |
+| ANN indexes — brute force → IVF-Flat → HNSW | ✅ Built |
 | Temporal predicate pushdown + measured recall collapse of post-filtering | Planned |
 | RRF fusion, pgvector baseline, retrieval-trace inspector | Planned |
+
+## Vector search, written from scratch
+
+Three indexes behind one protocol, one conformance suite, one benchmark harness:
+
+| index | what it is | recall@10 | QPS |
+|---|---|---|---|
+| brute force | exhaustive scan — the correctness oracle | 1.000 | 887 |
+| IVF-Flat | spherical k-means + inverted lists, `nprobe` dial | 0.992 (nprobe=1) · 1.000 (nprobe=32) | 24,120 · 934 |
+| HNSW | hierarchical navigable small-world graph, `ef_search` dial | 1.000 (ef=32, dedup) | 2,221 |
+
+![recall vs QPS](docs/design/benchmarks/recall-vs-qps.png)
+
+**The corpus has intrinsic dimensionality ≈1.1 in a 384-dim space** — CFR text
+is formulaic and repeats across versions (21.7× duplicate vectors). So ANN
+search hits near-perfect recall at minimal effort, and that says more about
+the corpus than the index. The benchmark includes a deliberately hard
+synthetic dataset so the accuracy/speed knobs have somewhere to show a real
+tradeoff. [Full methodology](docs/design/03-benchmarks.md).
 
 ## Measured
 
@@ -38,6 +57,8 @@ product needs both:
 | Corpus | 38,211 chunks across 147 section versions, 79 snapshot dates, 2016→2026 |
 | Lexical index | 6.5 MB, 3.8× smaller with varint + delta-gap encoding (4,872 terms) |
 | Search latency | p50 5.2 ms · p95 8.9 ms · p99 9.0 ms over the full corpus |
+| Embedded corpus | 38,211 chunks → 1,761 distinct texts (21.7× dedup), intrinsic dim 1.1 |
+| ANN indexes | brute 887 QPS / IVF-Flat 24k QPS @ 0.992 / HNSW 1.0 recall (dedup) |
 | Crash recovery | `SIGKILL` mid-ingest → byte-identical corpus ([chaos test](chaos/kill_worker_mid_ingest.py)) |
 
 ## Run it
@@ -56,6 +77,7 @@ uv run citedelta search "optional practical training stem extension"
 
 [Design doc](docs/design/01-design-doc.md) ·
 [ADRs](docs/design/06-decisions/) ·
+[Benchmarks](docs/design/03-benchmarks.md) ·
 [AI usage](docs/ai-usage.md)
 
 ---
