@@ -1,67 +1,65 @@
 # CiteDelta
 
-**Time-aware retrieval over versioned regulations.** Every answer carries an
-effective date and a citation.
+Time-aware search over versioned regulations. Every answer carries an effective
+date and a citation to the CFR.
 
-A rule changed on 2020-10-02. Ask what it said on 2019-06-01 and you get the
-2019 text — because the temporal predicate lives inside the index, not in a
-filter applied afterwards.
+Ask for §214.1 as of 2019-06-01 and you get the 2019 text. The temporal
+predicate is part of the index, not a filter bolted on afterwards.
 
-## Why this is hard
+## Background
 
-8 CFR §214.1 was **amended effective 2017-01-18** and **recorded by eCFR on
-2018-12-22**. For eleven months the official corpus served the old text — and
-was not wrong to, because that was the best available knowledge. So
-"what was the rule on 2018-01-01?" has two correct answers, and a compliance
-product needs both:
+The hard part isn't the search, it's the dates. 8 CFR §214.1 was amended
+effective 2017-01-18, but eCFR didn't record it until 2018-12-22. For eleven
+months the official corpus served the old text — and correctly, because that was
+the best available knowledge at the time. So "what was the rule on 2018-01-01?"
+has two defensible answers, and a compliance product needs both:
 
-- **valid time** — when the rule was in force in the world
+- **valid time** — when the rule was actually in force
 - **transaction time** — when the fact entered the record
 
-34 records in 8 CFR Part 214 have this gap. CiteDelta models both.
+34 of the records in 8 CFR Part 214 carry this gap. This project models both.
 
-## Built from scratch (not imported)
+## What's in here
 
-| Component | Status |
-|---|---|
-| Durable job queue on Postgres — `SKIP LOCKED`, leases, fencing tokens, DLQ | ✅ Built |
-| Bitemporal storage with a GiST exclusion constraint | ✅ Built |
-| Inverted index — varint postings, mmap, BM25 | ✅ Built |
-| ANN indexes — brute force → IVF-Flat → HNSW | ✅ Built |
-| Temporal predicate pushdown + measured recall collapse of post-filtering | Planned |
-| RRF fusion, pgvector baseline, retrieval-trace inspector | Planned |
+The point of the project is building retrieval machinery instead of importing
+it. Everything listed is written from scratch:
 
-## Vector search, written from scratch
+- Durable job queue on Postgres: `SKIP LOCKED`, leases, fencing tokens, DLQ
+- Bitemporal schema with a GiST exclusion constraint
+- Inverted index: varint postings, mmap, BM25
+- Three ANN indexes — brute force, IVF-Flat, HNSW — behind one protocol
+- Temporal predicate pushdown and post-filter recall measurement (next)
 
-Three indexes behind one protocol, one conformance suite, one benchmark harness:
+## Vector search
 
-| index | what it is | recall@10 | QPS |
-|---|---|---|---|
-| brute force | exhaustive scan — the correctness oracle | 1.000 | 887 |
-| IVF-Flat | spherical k-means + inverted lists, `nprobe` dial | 0.992 (nprobe=1) · 1.000 (nprobe=32) | 24,120 · 934 |
-| HNSW | hierarchical navigable small-world graph, `ef_search` dial | 1.000 (ef=32, dedup) | 2,221 |
+Three indexes share a protocol, a conformance suite, and a benchmark harness:
+
+- **brute force** — exhaustive scan; the correctness oracle. Recall 1.000, 887 QPS.
+- **IVF-Flat** — spherical k-means + inverted lists, `nprobe` dial. Recall 0.992
+  at 24,120 QPS (nprobe=1), 1.000 at 934 QPS (nprobe=32).
+- **HNSW** — hierarchical navigable small-world graph, `ef` dial. Recall 1.000
+  on the deduplicated corpus at 2,221 QPS.
 
 ![recall vs QPS](docs/design/benchmarks/recall-vs-qps.png)
 
-**The corpus has intrinsic dimensionality ≈1.1 in a 384-dim space** — CFR text
-is formulaic and repeats across versions (21.7× duplicate vectors). So ANN
-search hits near-perfect recall at minimal effort, and that says more about
-the corpus than the index. The benchmark includes a deliberately hard
-synthetic dataset so the accuracy/speed knobs have somewhere to show a real
-tradeoff. [Full methodology](docs/design/03-benchmarks.md).
+One finding worth stating plainly: this corpus is easy for ANN search. 38,211
+chunks collapse to 1,761 distinct texts (21.7× repeats across versions), and the
+intrinsic dimensionality is ≈1.1 in a 384-dim space, so recall hits near-perfect
+at minimal effort. The benchmarks include a deliberately hard synthetic dataset
+so the accuracy/speed tradeoff is visible at all. Methodology and full numbers:
+[docs/design/03-benchmarks.md](docs/design/03-benchmarks.md).
 
-## Measured
+## Numbers
 
-| | |
-|---|---|
-| Corpus | 38,211 chunks across 147 section versions, 79 snapshot dates, 2016→2026 |
-| Lexical index | 6.5 MB, 3.8× smaller with varint + delta-gap encoding (4,872 terms) |
-| Search latency | p50 5.2 ms · p95 8.9 ms · p99 9.0 ms over the full corpus |
-| Embedded corpus | 38,211 chunks → 1,761 distinct texts (21.7× dedup), intrinsic dim 1.1 |
-| ANN indexes | brute 887 QPS / IVF-Flat 24k QPS @ 0.992 / HNSW 1.0 recall (dedup) |
-| Crash recovery | `SIGKILL` mid-ingest → byte-identical corpus ([chaos test](chaos/kill_worker_mid_ingest.py)) |
+- Corpus: 38,211 chunks, 147 section versions, 79 snapshot dates (2016→2026)
+- Lexical index: 6.5 MB; varint + delta-gap encoding cuts postings 3.8×
+- Search latency: p50 5.2 ms · p95 8.9 ms · p99 9.0 ms
+- Embedded corpus: 1,761 distinct texts, 21.7× dedup, intrinsic dim 1.1
+- ANN: brute 887 QPS / IVF-Flat 24,120 QPS @ 0.992 / HNSW 1.0 recall (dedup)
+- Crash recovery: `SIGKILL` mid-ingest still yields a byte-identical corpus
+  ([chaos test](chaos/kill_worker_mid_ingest.py))
 
-## Run it
+## Running it
 
 ```bash
 git clone https://github.com/ayushkh-txst/CiteDelta-RAG.git && cd CiteDelta-RAG
@@ -73,7 +71,7 @@ uv run citedelta index build
 uv run citedelta search "optional practical training stem extension"
 ```
 
-## Design docs
+## Docs
 
 [Design doc](docs/design/01-design-doc.md) ·
 [ADRs](docs/design/06-decisions/) ·
