@@ -32,7 +32,10 @@ lint:  ## lint without fixing
 types:  ## strict type check
 	uv run mypy
 
-test:  ## run the test suite
+test:  ## run the test suite (against citedelta_test, never the dev db)
 	uv run pytest
+
+test-db-drop:  ## drop the test database (it is recreated on next run)
+	docker compose exec postgres dropdb -U citedelta --if-exists citedelta_test
 
 check: lint types test  ## everything CI runs
