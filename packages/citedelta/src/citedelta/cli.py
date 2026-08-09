@@ -90,6 +90,110 @@ def index_build() -> None:
     )
 
 
+embed_app = typer.Typer(help="Embed the corpus.")
+app.add_typer(embed_app, name="embed")
+
+
+@embed_app.command("run")
+def embed_run(batch_size: int = typer.Option(64, "--batch-size")) -> None:
+    """Embed every distinct chunk text not already cached. Resumable."""
+    from citedelta.embed.corpus import embed_corpus
+
+    configure_logging(get_settings().log_level)
+    new_run_id()
+    stats = asyncio.run(embed_corpus(batch_size=batch_size))
+    typer.echo(
+        f"chunks={stats.chunks_total} distinct={stats.distinct_texts} "
+        f"cached={stats.already_cached} embedded={stats.newly_embedded} "
+        f"dedup={stats.dedup_ratio:.2f}x"
+    )
+
+
+@embed_app.command("status")
+def embed_status() -> None:
+    """How much of the corpus is embedded."""
+    from substrate.db import Database
+
+    async def main() -> None:
+        async with Database.open(get_settings().database_url) as db, db.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT (SELECT count(*) FROM chunks)                          AS chunks,
+                       (SELECT count(DISTINCT content_sha256) FROM chunks)    AS distinct_texts,
+                       (SELECT count(*) FROM embeddings WHERE model_id = $1)  AS embedded
+                """,
+                "BAAI/bge-small-en-v1.5",
+            )
+            done, total = int(row["embedded"]), int(row["distinct_texts"])
+            typer.echo(
+                f"chunks={row['chunks']} distinct={total} embedded={done} "
+                f"({100 * done / max(total, 1):.1f}%)"
+            )
+
+    asyncio.run(main())
+
+
+vector_app = typer.Typer(help="Vector search.")
+app.add_typer(vector_app, name="vector")
+
+
+@vector_app.command("describe")
+def vector_describe() -> None:
+    """Measure the corpus's geometry."""
+    from citedelta.embed.corpus import load_corpus_vectors
+    from citedelta.index.analysis import describe
+
+    configure_logging(get_settings().log_level)
+    _, vectors = asyncio.run(load_corpus_vectors())
+    g = describe(vectors)
+    typer.echo(
+        f"vectors={g.n_vectors}  distinct={g.n_distinct} "
+        f"(duplicate ratio {g.duplicate_ratio:.2f}x)\n"
+        f"ambient_dim={g.ambient_dim}  intrinsic_dim={g.intrinsic_dim:.1f}\n"
+        f"mean nearest-neighbour distance={g.mean_nn_distance:.4f}"
+    )
+
+
+@vector_app.command("search")
+def vector_search(query: str, k: int = typer.Option(5, "-k")) -> None:
+    """Exact semantic search — no index, just a matmul."""
+    import time
+
+    from citedelta.embed.corpus import load_corpus_vectors
+    from citedelta.embed.local import LocalEmbeddings
+    from citedelta.index.brute import BruteForceIndex
+    from substrate.db import Database
+
+    configure_logging(get_settings().log_level)
+
+    async def main() -> None:
+        ids, vectors = await load_corpus_vectors()
+        index = BruteForceIndex()
+        index.build(ids, vectors)
+
+        q = LocalEmbeddings().embed([query])[0]
+        t0 = time.perf_counter()
+        hits = index.search(q, k)
+        elapsed = (time.perf_counter() - t0) * 1000
+
+        async with Database.open(get_settings().database_url) as db, db.acquire() as conn:
+            rows = {
+                int(r["id"]): (str(r["citation_path"]), str(r["text"]))
+                for r in await conn.fetch(
+                    "SELECT id, citation_path, text FROM chunks WHERE id = ANY($1::bigint[])",
+                    [h.id for h in hits],
+                )
+            }
+
+        typer.echo(f"exact search over {index.size} vectors in {elapsed:.1f} ms\n")
+        for rank, hit in enumerate(hits, 1):
+            cite, text = rows.get(hit.id, ("?", ""))
+            typer.echo(f"{rank:2}. sim={hit.similarity:.3f}  {cite}")
+            typer.echo(f"      {text[:170]}…\n")
+
+    asyncio.run(main())
+
+
 @app.command("search")
 def search(
     query: str,
