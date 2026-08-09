@@ -17,6 +17,7 @@ substrate = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "hnswlib>=0.8.0",
     "hypothesis>=6.115",
     "mypy>=1.13",
     "pytest>=8.3",

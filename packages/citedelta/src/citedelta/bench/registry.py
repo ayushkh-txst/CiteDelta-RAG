@@ -11,6 +11,7 @@ from citedelta.bench.metrics import compute_ground_truth
 from citedelta.bench.runner import BenchmarkResult, build_timed, measure
 from citedelta.embed.corpus import load_corpus_vectors
 from citedelta.index.brute import BruteForceIndex
+from citedelta.index.hnsw import HNSWIndex
 from citedelta.index.ivf import IVFFlatIndex
 from citedelta.index.vector import VectorIndex
 
@@ -20,6 +21,7 @@ log = structlog.get_logger(__name__)
 INDEXES: list[tuple[str, Callable[[], VectorIndex], Sequence[int | None]]] = [
     ("brute-force", BruteForceIndex, [None]),
     ("ivf-flat", IVFFlatIndex, [1, 2, 4, 8, 16, 32, 64, 128]),
+    ("hnsw", HNSWIndex, [10, 16, 32, 64, 128, 256]),
 ]
 
 

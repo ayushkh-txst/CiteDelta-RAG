@@ -11,6 +11,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from citedelta.index.brute import BruteForceIndex
+from citedelta.index.hnsw import HNSWIndex
 from citedelta.index.ivf import IVFFlatIndex
 from citedelta.index.vector import Ids, VectorIndex, Vectors
 
@@ -24,6 +25,8 @@ Corpus = tuple[np.ndarray, np.ndarray]
 INDEXES: list[tuple[str, Factory, int | None]] = [
     ("brute-force", BruteForceIndex, None),
     ("ivf-flat", lambda: IVFFlatIndex(n_lists=8, seed=0), 8),
+    # ef high enough to be exhaustive on the 200-vector conformance corpus.
+    ("hnsw", lambda: HNSWIndex(m=8, ef_construction=200, seed=1), 200),
 ]
 
 PARAMS = [pytest.param(f, e, id=name) for name, f, e in INDEXES]
