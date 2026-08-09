@@ -194,6 +194,33 @@ def vector_search(query: str, k: int = typer.Option(5, "-k")) -> None:
     asyncio.run(main())
 
 
+bench_app = typer.Typer(help="Benchmarks.")
+app.add_typer(bench_app, name="bench")
+
+
+@bench_app.command("run")
+def bench_run(
+    dataset: str = typer.Option(
+        "cfr-full", "--dataset", help="cfr-full | cfr-dedup | random-hard | all"
+    ),
+    k: int = typer.Option(10, "-k"),
+    out: str = typer.Option("docs/design/benchmarks/results.json", "--out"),
+) -> None:
+    """Benchmark every registered index against a dataset."""
+    from pathlib import Path
+
+    from citedelta.bench.registry import run_suite
+
+    configure_logging(get_settings().log_level)
+    new_run_id()
+    results = asyncio.run(run_suite(dataset, k=k))
+
+    from citedelta.bench.runner import as_markdown, save_results
+
+    save_results(results, Path(out))
+    typer.echo(as_markdown(results))
+
+
 @app.command("search")
 def search(
     query: str,
