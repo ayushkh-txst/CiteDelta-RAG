@@ -155,13 +155,21 @@ def vector_describe() -> None:
 
 
 @vector_app.command("search")
-def vector_search(query: str, k: int = typer.Option(5, "-k")) -> None:
-    """Exact semantic search — no index, just a matmul."""
+def vector_search(
+    query: str,
+    k: int = typer.Option(5, "-k"),
+    as_of: str | None = typer.Option(None, "--as-of", help="YYYY-MM-DD; exact temporal filter"),
+) -> None:
+    """Exact semantic search, optionally restricted to what was in force."""
     import time
 
     from citedelta.embed.corpus import load_corpus_vectors
     from citedelta.embed.local import LocalEmbeddings
     from citedelta.index.brute import BruteForceIndex
+    from citedelta.index.vector import BoolMask
+    from citedelta.ingest import EXTERNAL_ID
+    from citedelta.store.corpus import CorpusStore
+    from citedelta.temporal import AdmissibleSet, AsOf
     from substrate.db import Database
 
     configure_logging(get_settings().log_level)
@@ -171,10 +179,27 @@ def vector_search(query: str, k: int = typer.Option(5, "-k")) -> None:
         index = BruteForceIndex()
         index.build(ids, vectors)
 
-        q = LocalEmbeddings().embed([query])[0]
-        t0 = time.perf_counter()
-        hits = index.search(q, k)
-        elapsed = (time.perf_counter() - t0) * 1000
+        mask: BoolMask | None = None
+        async with Database.open(get_settings().database_url) as db, db.acquire() as conn:
+            store = CorpusStore(conn)
+            if as_of:
+                doc = await conn.fetchval(
+                    "SELECT id FROM documents WHERE external_id = $1", EXTERNAL_ID
+                )
+                point = AsOf(valid_on=date.fromisoformat(as_of))
+                adm = AdmissibleSet.from_as_of(
+                    await store.admissible_chunk_ids(int(doc), point), point, len(ids)
+                )
+                typer.echo(
+                    f"admissible {adm.size}/{len(ids)} "
+                    f"(selectivity {adm.selectivity:.2%}) at {as_of}\n"
+                )
+                mask = index.compile_filter(adm.ids)
+
+            q = LocalEmbeddings().embed([query])[0]
+            t0 = time.perf_counter()
+            hits = index.search(q, k, admissible=mask)
+            elapsed = (time.perf_counter() - t0) * 1000
 
         async with Database.open(get_settings().database_url) as db, db.acquire() as conn:
             rows = {

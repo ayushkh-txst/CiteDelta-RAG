@@ -14,13 +14,20 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any, Self
 
 import numpy as np
 import structlog
 
-from citedelta.index.vector import Ids, Neighbor, Vectors
+from citedelta.index.vector import (
+    BoolMask,
+    Ids,
+    Neighbor,
+    Vectors,
+    compile_mask,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -253,7 +260,17 @@ class HNSWIndex:
 
     # ----------------------------------------------------------------- search
 
-    def search(self, query: Vectors, k: int, *, effort: int | None = None) -> list[Neighbor]:
+    def compile_filter(self, admissible_ids: Collection[int]) -> BoolMask:
+        return compile_mask(self._ids, admissible_ids)
+
+    def search(
+        self,
+        query: Vectors,
+        k: int,
+        *,
+        effort: int | None = None,
+        admissible: BoolMask | None = None,
+    ) -> list[Neighbor]:
         """`effort` is ef_search: the size of the layer-0 result set.
 
         Clamped to at least k — you cannot return k results from a set of
@@ -263,6 +280,9 @@ class HNSWIndex:
         """
         if self.size == 0 or k <= 0 or self._entry is None:
             return []
+        if admissible is not None:
+            msg = f"{self.name}: filtered search is not implemented"
+            raise NotImplementedError(msg)
 
         ef = max(effort or self._ef_search, k)
         entry_points = [self._entry]

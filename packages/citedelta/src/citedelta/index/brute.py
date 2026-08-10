@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import Self
 
 import numpy as np
 
-from citedelta.index.vector import Ids, Neighbor, Vectors, cosine_distance
+from citedelta.index.vector import (
+    BoolMask,
+    Ids,
+    Neighbor,
+    Vectors,
+    compile_mask,
+    cosine_distance,
+)
 
 
 class BruteForceIndex:
@@ -38,13 +46,42 @@ class BruteForceIndex:
         self._ids = np.ascontiguousarray(ids, dtype=np.int64)
         self._vectors = np.ascontiguousarray(vectors, dtype=np.float32)
 
-    def search(self, query: Vectors, k: int, *, effort: int | None = None) -> list[Neighbor]:
-        """Exact top-k. `effort` is ignored: there is nothing to trade."""
+    def compile_filter(self, admissible_ids: Collection[int]) -> BoolMask:
+        return compile_mask(self._ids, admissible_ids)
+
+    def search(
+        self,
+        query: Vectors,
+        k: int,
+        *,
+        effort: int | None = None,
+        admissible: BoolMask | None = None,
+    ) -> list[Neighbor]:
+        """Exact top-k, optionally restricted to an admissible subset.
+
+        With a filter this is the FILTERED ORACLE — the exact answer to
+        'what are the k nearest admissible neighbours', and therefore what
+        every approximate filtered index is scored against.
+
+        Implemented by setting inadmissible distances to +inf rather than by
+        slicing the array. Slicing would allocate a copy of the admissible
+        rows on every query (megabytes, per query); masking the distance
+        vector touches N floats once and keeps row indices aligned with
+        `self._ids`, so no index translation is needed afterwards.
+        """
         if self.size == 0 or k <= 0:
             return []
-        k = min(k, self.size)
 
         distances = cosine_distance(self._vectors, query)
+
+        if admissible is not None:
+            available = int(np.count_nonzero(admissible))
+            if available == 0:
+                return []
+            k = min(k, available)
+            distances = np.where(admissible, distances, np.inf).astype(np.float32)
+        else:
+            k = min(k, self.size)
 
         # argpartition is O(N) and only guarantees the k smallest are in the
         # first k slots, unordered. Sort only the k, not all N.

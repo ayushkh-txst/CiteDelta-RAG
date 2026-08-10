@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Self, runtime_checkable
@@ -11,6 +12,7 @@ from numpy.typing import NDArray
 
 Vectors = NDArray[np.float32]
 Ids = NDArray[np.int64]
+BoolMask = NDArray[np.bool_]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +60,18 @@ class VectorIndex(Protocol):
 
     def build(self, ids: Ids, vectors: Vectors) -> None: ...
 
-    def search(self, query: Vectors, k: int, *, effort: int | None = None) -> list[Neighbor]: ...
+    def compile_filter(self, admissible_ids: Collection[int]) -> BoolMask:
+        """Compile an admissible id set into this index's internal ordering."""
+        ...
+
+    def search(
+        self,
+        query: Vectors,
+        k: int,
+        *,
+        effort: int | None = None,
+        admissible: BoolMask | None = None,
+    ) -> list[Neighbor]: ...
 
     def save(self, path: Path) -> None: ...
 
@@ -79,3 +92,21 @@ def cosine_distance(vectors: Vectors, query: Vectors) -> NDArray[np.float32]:
     output — it turns similarity into BLAS.
     """
     return 1.0 - (vectors @ query)
+
+
+def compile_mask(index_ids: Ids, admissible_ids: Collection[int]) -> BoolMask:
+    """Admissible ids → boolean mask in an index's internal row order.
+
+    One line, and it works identically for all three indexes — because every
+    one of them keeps `self._ids` aligned to its own internal layout. IVF
+    permutes its rows into cluster order and permutes `_ids` with them, so
+    `_ids[i]` is always the external id of internal row i. That invariant is
+    what makes filtering index-agnostic; break it in a future index and
+    filtering breaks silently, with plausible-looking wrong results.
+
+    np.isin rather than a Python set comprehension: at 38,211 x 728 this is a
+    sort-and-search in C (about a millisecond) instead of 38,211 interpreter
+    round-trips.
+    """
+    wanted = np.fromiter(admissible_ids, dtype=np.int64, count=len(admissible_ids))
+    return np.isin(index_ids, wanted)

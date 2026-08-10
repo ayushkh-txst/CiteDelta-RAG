@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -10,7 +11,13 @@ from typing import Self
 import numpy as np
 
 from citedelta.index.kmeans import kmeans
-from citedelta.index.vector import Ids, Neighbor, Vectors
+from citedelta.index.vector import (
+    BoolMask,
+    Ids,
+    Neighbor,
+    Vectors,
+    compile_mask,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,10 +124,23 @@ class IVFFlatIndex:
             empty=int((sizes == 0).sum()),
         )
 
-    def search(self, query: Vectors, k: int, *, effort: int | None = None) -> list[Neighbor]:
+    def compile_filter(self, admissible_ids: Collection[int]) -> BoolMask:
+        return compile_mask(self._ids, admissible_ids)
+
+    def search(
+        self,
+        query: Vectors,
+        k: int,
+        *,
+        effort: int | None = None,
+        admissible: BoolMask | None = None,
+    ) -> list[Neighbor]:
         """`effort` is nprobe: how many cells to scan."""
         if self.size == 0 or k <= 0:
             return []
+        if admissible is not None:
+            msg = f"{self.name}: filtered search is not implemented"
+            raise NotImplementedError(msg)
         k = min(k, self.size)
         n_probe = effort or self._default_probe or max(1, self.n_lists // 16)
         n_probe = max(1, min(n_probe, self.n_lists))

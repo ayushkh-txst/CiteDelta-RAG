@@ -106,6 +106,35 @@ class CorpusStore:
             for r in rows
         ]
 
+    async def admissible_chunk_ids(
+        self,
+        document_id: int,
+        as_of: AsOf,
+        *,
+        citation_prefix: str | None = None,
+    ) -> set[int]:
+        """Every chunk id in force at this point in bitemporal space.
+
+        Reuses `_ASOF_PREDICATE` verbatim: the filter used by the indexes and
+        the filter used by the SQL reads are literally the same predicate. If
+        they could drift, the benchmark would eventually be measuring against
+        a ground truth the product doesn't implement.
+        """
+        rows = await self._conn.fetch(
+            f"""
+            SELECT c.id
+            FROM chunks c
+            JOIN section_versions sv ON sv.id = c.section_version_id
+            WHERE {_ASOF_PREDICATE}
+              AND ($4::text IS NULL OR c.citation_path LIKE $4 || '%')
+            """,  # noqa: S608 - constant predicate; the filter is parameterized
+            document_id,
+            as_of.valid_on,
+            as_of.known_at,
+            citation_prefix,
+        )
+        return {int(r["id"]) for r in rows}
+
     async def count_as_of(self, document_id: int, as_of: AsOf) -> int:
         row = await self._conn.fetchrow(
             f"""
