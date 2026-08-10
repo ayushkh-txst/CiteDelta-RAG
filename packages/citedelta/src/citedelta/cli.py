@@ -267,6 +267,30 @@ def bench_plot(
     typer.echo(f"wrote {out}")
 
 
+@bench_app.command("collapse")
+def bench_collapse(
+    as_of: str = typer.Option("2019-06-01", "--as-of"),
+    k: int = typer.Option(10, "-k"),
+    queries: int = typer.Option(300, "--queries"),
+    out: str = typer.Option("docs/design/benchmarks/temporal-collapse.json", "--out"),
+) -> None:
+    """Measure how badly post-filtering an ANN result set fails."""
+    import json
+    from pathlib import Path
+
+    from citedelta.bench.temporal import as_markdown, measure_collapse, to_json
+
+    configure_logging(get_settings().log_level)
+    new_run_id()
+    result = asyncio.run(measure_collapse(date.fromisoformat(as_of), k=k, n_queries=queries))
+
+    path = Path(out)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(to_json(result), indent=2) + "\n")
+    typer.echo(as_markdown(result))
+    typer.echo(f"wrote {out}")
+
+
 @app.command("search")
 def search(
     query: str,
