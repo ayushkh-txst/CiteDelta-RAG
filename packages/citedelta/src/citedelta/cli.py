@@ -373,5 +373,46 @@ def search(
     asyncio.run(main())
 
 
+@bench_app.command("sweep")
+def bench_sweep(
+    as_of: str = typer.Option("2019-06-01", "--as-of"),
+    k: int = typer.Option(10, "-k"),
+    queries: int = typer.Option(200, "--queries"),
+    out: str = typer.Option("docs/design/benchmarks/selectivity-sweep.json", "--out"),
+) -> None:
+    """Post-filter vs overfetch vs pushdown, across selectivity levels."""
+    import json
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from citedelta.bench.plot import plot_selectivity_sweep
+    from citedelta.bench.temporal import run_sweep
+
+    configure_logging(get_settings().log_level)
+    new_run_id()
+    points = asyncio.run(run_sweep(k=k, n_queries=queries, as_of=date.fromisoformat(as_of)))
+    rows = [asdict(p) for p in points]
+
+    path = Path(out)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, indent=2) + "\n")
+
+    for name in ("hnsw", "ivf-flat"):
+        plot_selectivity_sweep(rows, path.parent / f"selectivity-{name}.png", index=name)
+
+    header = (
+        f"| {'sel':>6} | {'index':>11} | {'strategy':>21} | "
+        f"{'recall':>6} | {'zero':>5} | {'QPS':>7} | {'work':>9} |"
+    )
+    typer.echo(header)
+    typer.echo("|" + "|".join("-" * len(c) for c in header.split("|")[1:-1]) + "|")
+    for p in points:
+        typer.echo(
+            f"| {p.selectivity:>6.3f} | {p.index:>11} | {p.strategy:>21} "
+            f"| {p.recall:>6.3f} | {p.zero_result_rate:>5.2f} | {p.qps:>7.0f} "
+            f"| {p.mean_work:>9.0f} |"
+        )
+
+
 if __name__ == "__main__":
     app()

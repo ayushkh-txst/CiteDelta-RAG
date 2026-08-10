@@ -8,7 +8,13 @@ from datetime import date
 import numpy as np
 import structlog
 
-from citedelta.bench.strategies import post_filter_search
+from citedelta.bench.strategies import (
+    IN_INDEX,
+    POST_FILTER,
+    POST_FILTER_OVERFETCH,
+    post_filter_search,
+    required_overfetch,
+)
 from citedelta.config import get_settings
 from citedelta.embed.corpus import load_corpus_vectors
 from citedelta.index.brute import BruteForceIndex
@@ -217,3 +223,153 @@ def measure_lexical_collapse(
         in_index_ms=1000 * t_in / len(queries),
         unfiltered_ms=1000 * t_un / len(queries),
     )
+
+
+SELECTIVITY_LEVELS = (0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005)
+
+
+@dataclass
+class SweepPoint:
+    filter_kind: str  # "temporal" | "synthetic"
+    label: str
+    selectivity: float
+    index: str
+    strategy: str
+    k: int
+    effort: int | None
+    recall: float
+    zero_result_rate: float
+    qps: float
+    p95_ms: float
+    mean_work: float  # candidates fetched, cells probed, or nodes visited
+
+
+def synthetic_admissible(ids: Ids, selectivity: float, *, seed: int = 0) -> AdmissibleSet:
+    """A uniformly random admissible subset of a given size."""
+    rng = np.random.default_rng(seed)
+    n = max(1, round(len(ids) * selectivity))
+    chosen = rng.choice(len(ids), n, replace=False)
+    return AdmissibleSet(
+        ids=frozenset(int(i) for i in ids[chosen]),
+        label=f"synthetic s={selectivity:g}",
+        corpus_size=len(ids),
+    )
+
+
+def _work_done(index: VectorIndex) -> float:
+    """Whatever this index counts as work. Not on the protocol on purpose:
+    'cells probed' and 'nodes visited' aren't commensurable, and pretending
+    they are with a shared name would invite exactly the wrong comparison."""
+    for attribute in ("last_probes_used", "last_visits"):
+        value = getattr(index, attribute, None)
+        if value is not None:
+            return float(value)
+    return float(index.size)  # brute force always scans everything
+
+
+def sweep_one(
+    index: VectorIndex,
+    oracle: BruteForceIndex,
+    queries: Vectors,
+    admissible: AdmissibleSet,
+    *,
+    filter_kind: str,
+    k: int = 10,
+    effort: int | None = None,
+) -> list[SweepPoint]:
+    """All three strategies for one (index, admissible set)."""
+    import time
+
+    oracle_mask = oracle.compile_filter(admissible.ids)
+    index_mask = index.compile_filter(admissible.ids)
+    truths = [{n.id for n in oracle.search(q, k, admissible=oracle_mask)} for q in queries]
+
+    overfetch = required_overfetch(admissible.selectivity)
+    plans: list[tuple[str, int | None]] = [
+        (POST_FILTER.name, 1),
+        (POST_FILTER_OVERFETCH.name, overfetch),
+        (IN_INDEX.name, None),
+    ]
+
+    points: list[SweepPoint] = []
+    for strategy, param in plans:
+        latencies: list[float] = []
+        hits = zeros = 0
+        work = 0.0
+
+        for query, truth in zip(queries, truths, strict=True):
+            start = time.perf_counter()
+            if param is None:
+                got = index.search(query, k, effort=effort, admissible=index_mask)
+            else:
+                got = post_filter_search(
+                    index, query, k, admissible, effort=effort, overfetch=param
+                )
+            latencies.append((time.perf_counter() - start) * 1000.0)
+            work += _work_done(index)
+            if not got:
+                zeros += 1
+            hits += len({n.id for n in got} & truth)
+
+        latencies.sort()
+        total = sum(latencies) / 1000.0
+        points.append(
+            SweepPoint(
+                filter_kind=filter_kind,
+                label=admissible.label,
+                selectivity=admissible.selectivity,
+                index=index.name,
+                strategy=strategy,
+                k=k,
+                effort=effort,
+                recall=hits / (len(queries) * k),
+                zero_result_rate=zeros / len(queries),
+                qps=len(latencies) / total if total else 0.0,
+                p95_ms=latencies[int(0.95 * (len(latencies) - 1))],
+                mean_work=work / len(queries),
+            )
+        )
+    return points
+
+
+async def run_sweep(
+    *, k: int = 10, n_queries: int = 200, as_of: date | None = None, seed: int = 0
+) -> list[SweepPoint]:
+    """The full surface. Builds each index once; HNSW is the slow part."""
+    all_ids, all_vectors = await load_corpus_vectors()
+    corpus_ids, corpus_vectors, queries = held_out_split(
+        all_ids, all_vectors, n_queries=n_queries, seed=seed
+    )
+
+    oracle = BruteForceIndex()
+    oracle.build(corpus_ids, corpus_vectors)
+
+    from citedelta.index.hnsw import HNSWIndex
+    from citedelta.index.ivf import IVFFlatIndex
+
+    log.info("sweep.building")
+    ivf = IVFFlatIndex(seed=0)
+    ivf.build(corpus_ids, corpus_vectors)
+    hnsw = HNSWIndex(seed=42)
+    hnsw.build(corpus_ids, corpus_vectors)
+
+    indexes: list[tuple[VectorIndex, int | None]] = [
+        (oracle, None),
+        (ivf, 16),
+        (hnsw, 64),
+    ]
+
+    filters: list[tuple[str, AdmissibleSet]] = [
+        ("synthetic", synthetic_admissible(corpus_ids, s, seed=seed)) for s in SELECTIVITY_LEVELS
+    ]
+    if as_of is not None:
+        filters.append(("temporal", await load_admissible(as_of, len(corpus_ids))))
+
+    points: list[SweepPoint] = []
+    for kind, admissible in filters:
+        for index, effort in indexes:
+            points.extend(
+                sweep_one(index, oracle, queries, admissible, filter_kind=kind, k=k, effort=effort)
+            )
+        log.info("sweep.level", kind=kind, selectivity=round(admissible.selectivity, 4))
+    return points
