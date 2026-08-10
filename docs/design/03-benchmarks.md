@@ -149,3 +149,154 @@ the production index would be brute-force until the corpus grows past the
 point where ~1 ms exact search on one core stops being enough. At roughly 10×
 the current size (a few hundred thousand chunks) the recall/QPS tradeoff of
 IVF-Flat or HNSW starts to matter.
+
+---
+
+## Temporal pushdown
+
+### The claim
+
+Post-filtering an ANN result set silently destroys recall on a versioned
+corpus, because the k nearest neighbours can all be out of force. Correctness
+requires the temporal predicate to be enforced inside the index.
+
+### Why this corpus makes it acute
+
+| | |
+|---|---|
+| chunks | 37,911 (benchmark split) |
+| section-versions | 147 |
+| in force on any single date | ~31 sections |
+| **temporal selectivity** | **1.88% – 2.13%** across 2017–2026 |
+
+Selectivity is low *structurally*, not incidentally: a versioned corpus stores
+every version, and only one is in force at a time. Any date-scoped query on
+such a corpus is a high-selectivity filter — which is exactly the regime where
+post-filtering fails worst.
+
+### Result — post-filtering, at `as_of = 2019-06-01`
+
+Exact (brute-force) search, so the collapse is attributable purely to filter
+placement and not to ANN approximation. 300 held-out queries.
+
+| | |
+|---|---|
+| admissible | 724 / 37,911 (1.91%) |
+| admissible survivors in an unfiltered top-10 | **0.20** |
+| **queries returning zero usable results** | **82%** |
+| **post-filter recall@10** | **0.020** |
+
+Overfetching restores recall, at a price:
+
+| candidates fetched | % of corpus | recall@10 |
+|---|---|---|
+| 10 | 0.03% | 0.020 |
+| 25 | 0.07% | 0.395 |
+| 50 | 0.13% | 0.770 |
+| 100 | 0.26% | 0.979 |
+| 250 | 0.66% | 1.000 |
+| 500 | 1.3% | 1.000 |
+
+Expected overfetch for k=10 at 1.91% selectivity is `k/s ≈ 524`. Measured
+requirement to reach recall@10 = 1.000 was 250 candidates — *slightly better*
+than the uniform random expectation on this corpus, because the admissible
+rows are not adversarially near-duplicate-ranked here. The structural point
+stands, and the curve shows what it is:
+
+**So the honest claim is not "post-filtering is incorrect" but:**
+
+> Post-filtering is correct only if you overfetch by O(1/selectivity), and at
+> a 1.9% selectivity that is ~0.7% of the corpus scanned to return 10 rows —
+> and the multiplier is set by the QUERY's date, not by anything the index
+> operator can tune. At a tenth of that selectivity (0.19%) the same formula
+> demands ~10× more candidates.
+
+And the failure is silent. No exception, no warning: recall drops to 0.020 and
+the system reports success.
+
+### Result — why the graph walk cannot be pruned
+
+Measured on the built 38,211-node HNSW graph at 1.91% selectivity:
+
+| | |
+|---|---|
+| mean admissible-only layer-0 degree | **1.04** |
+| admissible nodes fully isolated | **72%** |
+| largest admissible-only component | **17.4%** |
+
+`M0 = 32` neighbours × 1.91% ≈ 0.61 admissible neighbours per node. The
+admissible subgraph has mean degree below 1 and shatters. Restricting traversal
+to admissible nodes therefore caps recall near **0.17 at any `ef`** — ~83% of
+admissible nodes are unreachable from any starting point.
+
+**Design consequence: inadmissible nodes are the bridges.** Traversal stays
+unfiltered; only the result set is filtered; the search continues until it
+holds `ef` admissible neighbours. The upper-layer descent is also unfiltered,
+since its only job is navigation.
+
+### Result — the selectivity sweep
+
+Recall@10, k=10. `s` = synthetic random admissible subset (mean of 200
+queries); ★ = the real temporal filter at `as_of = 2019-06-01`. Work is mean
+positions visited (HNSW) or cells probed (IVF) per query.
+
+**HNSW**
+
+| strategy | s=0.5% | s=1% | s=2% | s=5% | s=10% | s=20% | s=50% | ★1.9% | work (★) |
+|---|---|---|---|---|---|---|---|---|---|
+| post-filter | 0.010 | 0.006 | 0.018 | 0.047 | 0.096 | 0.163 | 0.239 | **0.044** | 100 |
+| post-filter+overfetch | 0.383 | 0.477 | 0.395 | 0.448 | 0.510 | 0.573 | 0.432 | **0.407** | 579 |
+| in-index | 0.422 | 0.520 | 0.454 | 0.508 | 0.574 | 0.643 | 0.479 | **0.484** | 3,320 |
+
+**IVF-Flat** (nprobe floor 16, adaptive under filter)
+
+| strategy | s=0.5% | s=1% | s=2% | s=5% | s=10% | s=20% | s=50% | ★1.9% | work (★) |
+|---|---|---|---|---|---|---|---|---|---|
+| post-filter | 0.005 | 0.009 | 0.017 | 0.048 | 0.102 | 0.192 | 0.276 | **0.013** | 16 |
+| post-filter+overfetch | 0.779 | 0.855 | 0.851 | 0.868 | 0.815 | 0.764 | 0.492 | **0.791** | 16 |
+| in-index | 0.786 | 0.920 | 0.941 | 0.945 | 0.910 | 0.859 | 0.550 | **0.949** | 16 |
+
+**Brute-force** (reference)
+
+| strategy | ★1.9% |
+|---|---|
+| post-filter | 0.018 |
+| post-filter+overfetch | 0.799 |
+| in-index | **1.000** |
+
+![HNSW under a filter](benchmarks/selectivity-hnsw.png)
+![IVF under a filter](benchmarks/selectivity-ivf-flat.png)
+
+Reading the panels: `post-filter` recall collapses with selectivity on every
+index. `post-filter+overfetch` restores accuracy but pays for it in throughput
+or tails. `in-index` holds recall substantially flat with sub-linear work. The
+starred point — the real temporal filter — sits **at or slightly above** the
+synthetic curve at equal selectivity: on this corpus temporal admissibility is
+not more adversarial than a random subset. HNSW's in-index ceiling (~0.48) is
+the reachability ceiling of §"why the graph walk cannot be pruned", the same
+ceiling the day-2 reference cross-check confirmed in `hnswlib`; IVF and
+brute-force are unaffected because they do not rely on a walk. Full data:
+[`selectivity-sweep.json`](benchmarks/selectivity-sweep.json).
+
+### Costs of pushdown, stated plainly
+
+1. **Fixed cost becomes data-dependent.** Unfiltered IVF probes exactly
+   `nprobe` cells. Filtered IVF probes until it finds k admissible rows, which
+   depends on where they happen to be. A latency *guarantee* becomes a latency
+   *distribution*, and p95 is set by the unluckiest query.
+2. **Bounded by policy, not by luck.** Both filtered indexes carry budgets
+   (`max_visits` for HNSW, a probe ceiling for IVF) so a pathological filter
+   degrades recall instead of hanging. Budgets are config, not implementation:
+   the recall-vs-tail-latency trade is an operator's call.
+3. **Filter compilation is O(N) per request.** ~1 ms at 38k. `as_of` is
+   per-request so this cannot be amortized in general — but most real queries
+   ask about *today*, so a small LRU keyed on `as_of` would serve nearly all
+   traffic from a warm mask. Not built; measured and noted.
+
+### Where filtering is free
+
+BM25 is exhaustive, so moving the filter before the top-k costs nothing — it
+*saves* the scoring arithmetic for ~98% of postings, making a filtered lexical
+query **faster** than an unfiltered one (5.4 ms vs 21.0 ms). The asymmetry is
+not approximate-vs-exact; it is that an ANN index deliberately touches as little
+as possible, so a filter forces it to touch more.

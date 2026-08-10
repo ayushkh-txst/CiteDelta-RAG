@@ -28,7 +28,38 @@ it. Everything listed is written from scratch:
 - Bitemporal schema with a GiST exclusion constraint
 - Inverted index: varint postings, mmap, BM25
 - Three ANN indexes — brute force, IVF-Flat, HNSW — behind one protocol
-- Temporal predicate pushdown and post-filter recall measurement (next)
+- Temporal predicate pushdown inside every index, measured against post-filter
+
+## The result this project exists to produce
+
+A rule changed. Ask what it said on a past date and you get the text that was
+in force — because the temporal predicate lives *inside* the index.
+
+At `as_of = 2019-06-01`, **1.91%** of the corpus is in force (724 of 37,911
+chunks). Retrieve the 10 nearest neighbours and filter afterwards, the way a
+standard RAG pipeline does:
+
+| | post-filter | predicate pushed into the index |
+|---|---|---|
+| recall@10 vs. exact filtered search | **0.020** | **0.949** (IVF-Flat) / **1.000** (brute) |
+| queries returning **zero** results | **82%** | 0% |
+
+Nothing errors in the left-hand column. Recall silently collapses and the
+system reports success — which is why the fix has to be structural rather than
+a larger `k`.
+
+Restoring recall by post-filtering *is* possible: overfetch ~250 candidates
+(0.7% of the corpus) instead of 10. At which point the cost of an answer is
+set by the query's date, not by anything the index operator controls.
+[Full methodology and the selectivity sweep](docs/design/03-benchmarks.md#temporal-pushdown).
+
+**Why the graph walk can't simply skip inadmissible nodes:** at this
+selectivity the admissible-only subgraph has mean degree **1.04** and 72% of
+admissible nodes are isolated — pruning the walk caps recall at 0.17. The
+inadmissible nodes are the bridges, so filtered search is never
+width-limited, only depth-limited. Vector recall under pushdown is carried by
+brute-force and IVF-Flat, which are the engines the capacity numbers below
+would actually deploy.
 
 ## Vector search
 
@@ -56,6 +87,8 @@ so the accuracy/speed tradeoff is visible at all. Methodology and full numbers:
 - Search latency: p50 5.2 ms · p95 8.9 ms · p99 9.0 ms
 - Embedded corpus: 1,761 distinct texts, 21.7× dedup, intrinsic dim 1.1
 - ANN: brute 887 QPS / IVF-Flat 24,120 QPS @ 0.992 / HNSW 1.0 recall (dedup)
+- Temporal pushdown: recall 0.020 → 0.949 (IVF) at 1.91% selectivity; filtered
+  lexical *faster* than unfiltered (5.4 ms vs 21.0 ms)
 - Crash recovery: `SIGKILL` mid-ingest still yields a byte-identical corpus
   ([chaos test](chaos/kill_worker_mid_ingest.py))
 
