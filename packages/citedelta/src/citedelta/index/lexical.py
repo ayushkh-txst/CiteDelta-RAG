@@ -33,12 +33,14 @@ import mmap
 import os
 import struct
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
+import numpy as np
 import structlog
+from numpy.typing import NDArray
 
 from citedelta.index.tokenize import tokenize
 from citedelta.index.varint import read_varint, write_varint
@@ -218,8 +220,12 @@ class LexicalIndex:
             msg = f"index format v{version}, expected v{FORMAT_VERSION}"
             raise ValueError(msg)
 
-        self._doc_ids = struct.unpack_from(f"<{self.n_docs}Q", self._mm, off_docids)
-        self._doc_lens = struct.unpack_from(f"<{self.n_docs}I", self._mm, off_doclens)
+        self._doc_ids = np.asarray(
+            struct.unpack_from(f"<{self.n_docs}Q", self._mm, off_docids), dtype=np.int64
+        )
+        self._doc_lens = np.asarray(
+            struct.unpack_from(f"<{self.n_docs}I", self._mm, off_doclens), dtype=np.int32
+        )
 
         # Dictionary into RAM; postings stay on disk behind the mmap.
         self._terms: dict[str, tuple[int, int, int]] = {}
@@ -266,15 +272,31 @@ class LexicalIndex:
     def _idf(self, df: int) -> float:
         return math.log(1.0 + (self.n_docs - df + 0.5) / (df + 0.5))
 
-    def search(self, query: str, k: int = 10, *, allowed: set[int] | None = None) -> list[Hit]:
-        """Top-k by BM25.
+    def compile_filter(self, admissible_ids: Collection[int]) -> NDArray[np.bool_]:
+        """External chunk ids → mask over internal document positions."""
+        wanted = np.fromiter(admissible_ids, dtype=np.int64, count=len(admissible_ids))
+        return np.isin(self._doc_ids, wanted)
 
-        `allowed` is a deliberate naive post-filter over external chunk ids:
-                candidates are scored first, then discarded. It works for BM25 because
-                you can always widen k. It is catastrophic for approximate vector
-                search, where the k nearest neighbours can all be inadmissible and
-                widening k doesn't save you. That cost is measured in the vector-index
-                benchmark rather than assumed.
+    def search(
+        self,
+        query: str,
+        k: int = 10,
+        *,
+        admissible: NDArray[np.bool_] | None = None,
+    ) -> list[Hit]:
+        """Top-k by BM25, optionally restricted to an admissible subset.
+
+        The filter is applied INSIDE the postings traversal — before scoring,
+        and therefore long before the top-k heap. That makes the result exact:
+        the k best admissible documents, not the admissible remainder of the k
+        best documents. Those are different sets, and the collapse measurement
+        shows how different.
+
+        Skipping early is also strictly cheaper. At ~2% selectivity roughly
+        98% of postings are discarded before the BM25 arithmetic runs, so a
+        filtered query is FASTER than an unfiltered one. That is the opposite
+        of what happens to the graph index, and the contrast is the
+        interesting part.
         """
         terms = tokenize(query)
         if not terms:
@@ -287,15 +309,14 @@ class LexicalIndex:
                 continue
             idf = self._idf(entry[0])
             for internal_id, tf in self.postings(term):
+                if admissible is not None and not admissible[internal_id]:
+                    continue
                 dl = self._doc_lens[internal_id]
                 denom = tf + K1 * (1.0 - B + B * dl / self.avgdl)
                 scores[internal_id] += idf * (tf * (K1 + 1.0)) / denom
-
-        if allowed is not None:
-            scores = {i: s for i, s in scores.items() if self._doc_ids[i] in allowed}
 
         # A bounded heap, not a full sort. Ties break on internal id so
         # results are deterministic — which is what makes the conformance
         # test below meaningful.
         top = heapq.nlargest(k, scores.items(), key=lambda kv: (kv[1], -kv[0]))
-        return [Hit(chunk_id=self._doc_ids[i], score=s) for i, s in top]
+        return [Hit(chunk_id=int(self._doc_ids[i]), score=s) for i, s in top]

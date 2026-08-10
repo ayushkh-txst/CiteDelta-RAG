@@ -291,12 +291,42 @@ def bench_collapse(
     typer.echo(f"wrote {out}")
 
 
-@app.command("search")
+@bench_app.command("lexical-collapse")
+def bench_lexical_collapse(
+    as_of: str = typer.Option("2019-06-01", "--as-of"),
+    k: int = typer.Option(10, "-k"),
+) -> None:
+    """BM25 post-filtering vs in-index filtering, same ranker."""
+    from citedelta.bench.queries import DOMAIN_QUERIES
+    from citedelta.bench.temporal import load_admissible, measure_lexical_collapse
+    from citedelta.embed.corpus import load_corpus_vectors
+    from citedelta.index.build import LEXICAL_INDEX_FILENAME
+    from citedelta.index.lexical import LexicalIndex
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+
+    async def main() -> None:
+        ids, _ = await load_corpus_vectors()
+        admissible = await load_admissible(date.fromisoformat(as_of), len(ids))
+        with LexicalIndex(settings.index_dir / LEXICAL_INDEX_FILENAME) as ix:
+            result = measure_lexical_collapse(ix, DOMAIN_QUERIES, admissible, k=k)
+
+        typer.echo(f"\nas_of={as_of}  selectivity={result.selectivity:.2%}\n")
+        typer.echo(f"  in-index recall@10    {result.in_index_recall:.3f}  (exact by construction)")
+        typer.echo(f"  post-filter recall@10 {result.post_filter_recall:.3f}")
+        typer.echo(f"  post-filter zero-rate {result.post_filter_zero_rate:.3f}")
+        typer.echo(f"  in-index latency      {result.in_index_ms:.2f} ms")
+        typer.echo(f"  unfiltered latency    {result.unfiltered_ms:.2f} ms")
+
+    asyncio.run(main())
+
+
 def search(
     query: str,
     k: int = typer.Option(10, "-k"),
     as_of: str = typer.Option(
-        None, "--as-of", help="YYYY-MM-DD; post-filter (temporal pushdown is planned)"
+        None, "--as-of", help="YYYY-MM-DD; exact temporal filter inside the postings scan"
     ),
 ) -> None:
     """Search the lexical index."""
@@ -307,11 +337,11 @@ def search(
     settings = get_settings()
 
     async def main() -> None:
-        allowed: set[int] | None = None
+        admissible_ids: set[int] | None = None
         rows_by_id: dict[int, tuple[str, str]] = {}
         async with Database.open(settings.database_url) as db, db.acquire() as conn:
             if as_of:
-                allowed = {
+                admissible_ids = {
                     int(r["id"])
                     for r in await conn.fetch(
                         """
@@ -326,7 +356,8 @@ def search(
                 }
 
             with LexicalIndex(settings.index_dir / LEXICAL_INDEX_FILENAME) as ix:
-                hits = ix.search(query, k=k, allowed=allowed)
+                mask = ix.compile_filter(admissible_ids) if admissible_ids is not None else None
+                hits = ix.search(query, k=k, admissible=mask)
 
             for r in await conn.fetch(
                 "SELECT id, citation_path, text FROM chunks WHERE id = ANY($1::bigint[])",

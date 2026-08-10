@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 
+import numpy as np
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -153,8 +154,65 @@ def test_postings_are_sorted_and_complete(index: LexicalIndex) -> None:
 
 
 def test_allowed_filter_restricts_results(index: LexicalIndex) -> None:
-    hits = index.search("practical training", k=8, allowed={102, 103})
+    hits = index.search("practical training", k=8, admissible=index.compile_filter({102, 103}))
     assert {h.chunk_id for h in hits} <= {102, 103}
+
+
+def test_filtered_search_is_exact(tmp_path: Path) -> None:
+    """Filtering before top-k gives the k best ADMISSIBLE docs — verified
+    against an index built only from the admissible documents."""
+    build_index(CORPUS, tmp_path / "all.idx")
+    admissible = {102, 103, 108}
+    build_index([d for d in CORPUS if d[0] in admissible], tmp_path / "sub.idx")
+
+    with LexicalIndex(tmp_path / "all.idx") as full, LexicalIndex(tmp_path / "sub.idx") as sub:
+        mask = full.compile_filter(admissible)
+        for query in ("practical training", "unemployment", "extension"):
+            mine = [h.chunk_id for h in full.search(query, 5, admissible=mask)]
+            # Same documents, same order. (Scores differ: IDF is computed over
+            # the full corpus in one and the subset in the other — the
+            # deliberate approximation documented in the search docstring.)
+            assert mine == [h.chunk_id for h in sub.search(query, 5)]
+
+
+def test_post_filtering_after_topk_loses_documents(tmp_path: Path) -> None:
+    """The core claim, on the lexical side. Same ranker, filter moved."""
+    build_index(CORPUS, tmp_path / "t.idx")
+    admissible = {108}  # only the least-similar match survives
+    with LexicalIndex(tmp_path / "t.idx") as ix:
+        mask = ix.compile_filter(admissible)
+        exact = ix.search("practical training unemployment", 3, admissible=mask)
+        naive = [
+            h for h in ix.search("practical training unemployment", 3) if h.chunk_id in admissible
+        ]
+
+        assert [h.chunk_id for h in exact] == [108]
+        assert naive == []  # post-filter found nothing
+
+
+def test_filter_never_returns_an_inadmissible_document(tmp_path: Path) -> None:
+    build_index(CORPUS, tmp_path / "t.idx")
+    admissible = {101, 104}
+    with LexicalIndex(tmp_path / "t.idx") as ix:
+        mask = ix.compile_filter(admissible)
+        for query in ("practical", "unemployment", "student", "extension"):
+            assert {h.chunk_id for h in ix.search(query, 10, admissible=mask)} <= admissible
+
+
+def test_empty_filter_returns_nothing(tmp_path: Path) -> None:
+    build_index(CORPUS, tmp_path / "t.idx")
+    with LexicalIndex(tmp_path / "t.idx") as ix:
+        assert ix.search("practical training", 5, admissible=ix.compile_filter(set())) == []
+
+
+def test_filter_mask_aligns_with_internal_positions(tmp_path: Path) -> None:
+    """The mask indexes internal positions, but callers speak in chunk ids.
+    A misalignment here silently returns the wrong documents."""
+    build_index(CORPUS, tmp_path / "t.idx")
+    with LexicalIndex(tmp_path / "t.idx") as ix:
+        mask = ix.compile_filter({105})
+        assert int(mask.sum()) == 1
+        assert int(ix._doc_ids[int(np.argmax(mask))]) == 105
 
 
 def test_atomic_write_leaves_no_temp_file(tmp_path: Path) -> None:

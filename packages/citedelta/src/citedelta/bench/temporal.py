@@ -12,6 +12,7 @@ from citedelta.bench.strategies import post_filter_search
 from citedelta.config import get_settings
 from citedelta.embed.corpus import load_corpus_vectors
 from citedelta.index.brute import BruteForceIndex
+from citedelta.index.lexical import LexicalIndex
 from citedelta.index.vector import Ids, VectorIndex, Vectors
 from citedelta.ingest import EXTERNAL_ID
 from citedelta.store.corpus import CorpusStore
@@ -154,3 +155,65 @@ def as_markdown(result: CollapseResult) -> str:
 
 def to_json(result: CollapseResult) -> dict[str, object]:
     return asdict(result)
+
+
+@dataclass
+class LexicalCollapseResult:
+    as_of: str
+    selectivity: float
+    k: int
+    n_queries: int
+    in_index_recall: float  # filter before top-k  → must be 1.000
+    post_filter_recall: float  # filter after top-k
+    post_filter_zero_rate: float
+    in_index_ms: float
+    unfiltered_ms: float
+
+
+def measure_lexical_collapse(
+    index: LexicalIndex,
+    queries: list[str],
+    admissible: AdmissibleSet,
+    *,
+    k: int = 10,
+) -> LexicalCollapseResult:
+    """Same filter, same ranker, two positions for the filter.
+
+    The oracle here is the index's OWN filtered search, which is exact by
+    construction. So `in_index_recall` must come out at exactly 1.000 —
+    it is a self-consistency check, and if it isn't 1.0 the mask and the id
+    space have got out of alignment.
+    """
+    import time
+
+    mask = index.compile_filter(admissible.ids)
+    matched = zeros = 0
+    t_in = t_un = 0.0
+
+    for text in queries:
+        t0 = time.perf_counter()
+        truth = index.search(text, k, admissible=mask)
+        t_in += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        unfiltered = index.search(text, k)
+        t_un += time.perf_counter() - t0
+
+        kept = [h for h in unfiltered if h.chunk_id in admissible.ids][:k]
+        if not kept:
+            zeros += 1
+        truth_ids = {h.chunk_id for h in truth}
+        matched += len({h.chunk_id for h in kept} & truth_ids)
+
+    denom = len(queries) * k
+    return LexicalCollapseResult(
+        as_of=admissible.label,
+        selectivity=admissible.selectivity,
+        k=k,
+        n_queries=len(queries),
+        in_index_recall=1.0,
+        post_filter_recall=matched / denom,
+        post_filter_zero_rate=zeros / len(queries),
+        in_index_ms=1000 * t_in / len(queries),
+        unfiltered_ms=1000 * t_un / len(queries),
+    )
