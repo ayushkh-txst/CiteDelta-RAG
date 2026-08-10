@@ -414,5 +414,78 @@ def bench_sweep(
         )
 
 
+@app.command("ask")
+def ask(
+    query: str,
+    k: int = typer.Option(5, "-k"),
+    as_of: str = typer.Option(None, "--as-of", help="YYYY-MM-DD; defaults to today"),
+) -> None:
+    """Hybrid retrieval: BM25 + vector, both temporally filtered, RRF-fused."""
+    from datetime import UTC, datetime
+
+    from citedelta.bench.temporal import load_admissible
+    from citedelta.embed.corpus import load_corpus_vectors
+    from citedelta.embed.local import LocalEmbeddings
+    from citedelta.index.brute import BruteForceIndex
+    from citedelta.index.build import LEXICAL_INDEX_FILENAME
+    from citedelta.index.lexical import LexicalIndex
+    from citedelta.retrieve import hybrid_search
+    from substrate.db import Database
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    point = date.fromisoformat(as_of) if as_of else datetime.now(UTC).date()
+
+    async def main() -> None:
+        ids, vectors = await load_corpus_vectors()
+        vector_index = BruteForceIndex()
+        vector_index.build(ids, vectors)
+        admissible = await load_admissible(point, len(ids))
+        query_vector = LocalEmbeddings().embed([query])[0]
+
+        with LexicalIndex(settings.index_dir / LEXICAL_INDEX_FILENAME) as lexical:
+            trace = hybrid_search(
+                query,
+                query_vector,
+                lexical=lexical,
+                vector=vector_index,
+                admissible=admissible,
+                k=k,
+            )
+
+        async with Database.open(settings.database_url) as db, db.acquire() as conn:
+            rows = {
+                int(r["id"]): (
+                    str(r["citation_path"]),
+                    r["effective_from"],
+                    r["effective_to"],
+                    str(r["text"]),
+                )
+                for r in await conn.fetch(
+                    """SELECT c.id, c.citation_path, sv.effective_from,
+                              sv.effective_to, c.text
+                       FROM chunks c JOIN section_versions sv
+                         ON sv.id = c.section_version_id
+                       WHERE c.id = ANY($1::bigint[])""",
+                    [h.chunk_id for h in trace.hits],
+                )
+            }
+
+        typer.echo(
+            f"\nas_of={point}  admissible={admissible.size} "
+            f"({admissible.selectivity:.2%})  "
+            f"lexical={trace.candidates_lexical} vector={trace.candidates_vector}\n"
+        )
+        for rank, hit in enumerate(trace.hits, 1):
+            citation, frm, to, text = rows.get(hit.chunk_id, ("?", None, None, ""))
+            provenance = " ".join(f"{name}#{r}" for name, r in sorted(hit.ranks.items()))
+            typer.echo(f"{rank}. {citation}")
+            typer.echo(f"   in force {frm} .. {to or 'current'}   [{provenance}]")
+            typer.echo(f"   {text[:200]}\u2026\n")
+        typer.echo("Not legal advice. Verify against the official eCFR.")
+
+    asyncio.run(main())
+
+
 if __name__ == "__main__":
     app()
