@@ -40,6 +40,7 @@ class HNSWIndex:
         ef_construction: int = 200,
         ef_search: int = 64,
         seed: int = 42,
+        max_visits: int = 20_000,
     ) -> None:
         self._m = m
         # Layer 0 gets twice the budget: it holds every node and does all the
@@ -49,6 +50,14 @@ class HNSWIndex:
         self._ef_search = ef_search
         self._ml = 1.0 / math.log(m)
         self._seed = seed
+
+        # Latency guardrail. Under a very selective filter the search cannot
+        # stop early (see _search_layer), so without a ceiling a pathological
+        # query walks the entire graph. Bounding VISITS converts an unbounded
+        # latency into bounded latency with degraded recall — the right trade
+        # for a request path, and a policy choice, so it is configurable.
+        self._max_visits = max_visits
+        self._last_visits = 0
 
         self._ids: Ids = np.zeros(0, dtype=np.int64)
         self._vectors: Vectors = np.zeros((0, 0), dtype=np.float32)
@@ -82,17 +91,35 @@ class HNSWIndex:
         return 1.0 - (self._vectors[nodes] @ query)
 
     def _search_layer(
-        self, query: Vectors, entry: list[int], ef: int, layer: int
+        self,
+        query: Vectors,
+        entry: list[int],
+        ef: int,
+        layer: int,
+        *,
+        admissible: BoolMask | None = None,
+        budget: int | None = None,
     ) -> list[tuple[float, int]]:
-        """Greedy best-first search within one layer. Returns [(distance, node)].
+        """Greedy best-first search in one layer, optionally filtered.
 
-        Two heaps, and they point opposite ways on purpose:
-          * `candidates` is a MIN-heap — always expand the most promising node.
-          * `results`    is a MAX-heap (distances negated) — so the WORST
-            result is at the top and can be evicted in O(log ef).
+        Exactly two things change when `admissible` is supplied, and the
+        asymmetry between them IS the algorithm:
 
-        Stop when the best remaining candidate is worse than the worst result
-        already held: nothing reachable from here can improve the set.
+          * Which nodes may enter `results`  — only admissible ones.
+          * Which nodes may be EXPANDED      — unchanged. All of them.
+
+        Every inadmissible node is still traversed, because at 1.9%
+        selectivity the admissible subgraph has mean degree 1.04 and shatters
+        into ~500 fragments (§4.1). Inadmissible nodes are the only paths
+        between admissible regions.
+
+        The stopping rule then does the rest of the work by itself. Normally
+        we stop once the nearest remaining candidate is worse than the worst
+        result held — but that requires `results` to be full. Under a filter
+        `results` fills slowly, so the same condition automatically keeps the
+        search expanding until it has found ef ADMISSIBLE neighbours. No
+        special case; the invariant 'expand while the result set is not yet
+        good enough' was already the right one.
         """
         visited = set(entry)
         seed_distances = self._distances(query, entry)
@@ -101,35 +128,45 @@ class HNSWIndex:
             (float(d), i) for d, i in zip(seed_distances, entry, strict=True)
         ]
         heapq.heapify(candidates)
-        results: list[tuple[float, int]] = [
-            (-float(d), i) for d, i in zip(seed_distances, entry, strict=True)
-        ]
-        heapq.heapify(results)
+
+        # Only admissible entry points seed the result set. Note `results` may
+        # legitimately start EMPTY, which unfiltered search can never do.
+        results: list[tuple[float, int]] = []
+        for d, i in zip(seed_distances, entry, strict=True):
+            if admissible is None or admissible[i]:
+                heapq.heappush(results, (-float(d), i))
 
         adjacency = self._graph[layer]
+        visits = 0
 
         while candidates:
             distance, node = heapq.heappop(candidates)
-            furthest = -results[0][0]
-            if distance > furthest and len(results) >= ef:
+            if len(results) >= ef and distance > -results[0][0]:
                 break
 
             unvisited = [n for n in adjacency.get(node, ()) if n not in visited]
             if not unvisited:
                 continue
-            # Mark BEFORE expanding, or a node reachable by two paths gets
-            # queued twice and the search degenerates.
             visited.update(unvisited)
+            visits += len(unvisited)
 
             for raw, neighbour in zip(self._distances(query, unvisited), unvisited, strict=True):
                 d = float(raw)
-                if len(results) < ef:
-                    heapq.heappush(candidates, (d, neighbour))
+                # inf while the result set is underfull, so nothing is pruned
+                # from the frontier until we actually have ef good answers.
+                worst = -results[0][0] if len(results) >= ef else math.inf
+                if d >= worst:
+                    continue
+                heapq.heappush(candidates, (d, neighbour))
+                if admissible is None or admissible[neighbour]:
                     heapq.heappush(results, (-d, neighbour))
-                elif d < -results[0][0]:
-                    heapq.heappush(candidates, (d, neighbour))
-                    heapq.heapreplace(results, (-d, neighbour))
+                    if len(results) > ef:
+                        heapq.heappop(results)
 
+            if budget is not None and visits >= budget:
+                break
+
+        self._last_visits = visits
         return [(-negated, node) for negated, node in results]
 
     def _select_neighbours(
@@ -263,6 +300,12 @@ class HNSWIndex:
     def compile_filter(self, admissible_ids: Collection[int]) -> BoolMask:
         return compile_mask(self._ids, admissible_ids)
 
+    @property
+    def last_visits(self) -> int:
+        """Distance computations in the most recent search. Diagnostic only,
+        and not thread-safe — same caveat as IVF's probe counter."""
+        return self._last_visits
+
     def search(
         self,
         query: Vectors,
@@ -280,17 +323,29 @@ class HNSWIndex:
         """
         if self.size == 0 or k <= 0 or self._entry is None:
             return []
-        if admissible is not None:
-            msg = f"{self.name}: filtered search is not implemented"
-            raise NotImplementedError(msg)
 
         ef = max(effort or self._ef_search, k)
         entry_points = [self._entry]
 
+        # The descent is DELIBERATELY UNFILTERED.
+        #
+        # Upper layers exist only to navigate — to land near the query before
+        # the real search starts. Filtering here would break it two ways:
+        # `_search_layer(..., ef=1)` could return an EMPTY result set (the
+        # entry point may be inadmissible), and `[0][1]` would raise; and even
+        # if it didn't, restricting navigation to admissible nodes reintroduces
+        # exactly the connectivity collapse from §4.1, one layer up.
+        #
+        # Filtering only ever applies at layer 0, where results are produced.
         for layer in range(self._max_level, 0, -1):
             entry_points = [self._search_layer(query, entry_points, 1, layer)[0][1]]
 
-        found = self._search_layer(query, entry_points, ef, 0)
+        found = self._search_layer(
+            query, entry_points, ef, 0, admissible=admissible, budget=self._max_visits
+        )
+        if not found:
+            return []
+
         # Deterministic tie-break on (distance, external id), matching the
         # oracle. Duplicate vectors are everywhere in this corpus.
         found.sort(key=lambda pair: (pair[0], int(self._ids[pair[1]])))

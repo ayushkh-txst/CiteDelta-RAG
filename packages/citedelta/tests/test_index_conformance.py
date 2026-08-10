@@ -31,10 +31,11 @@ INDEXES: list[tuple[str, Factory, int | None]] = [
 
 PARAMS = [pytest.param(f, e, id=name) for name, f, e in INDEXES]
 
-# Indexes with in-index filtering implemented. HNSW joins in Block 4.
+# Indexes with in-index filtering implemented.
 FILTER_CAPABLE = [
     pytest.param(BruteForceIndex, None, id="brute-force"),
     pytest.param(lambda: IVFFlatIndex(n_lists=8, seed=0), 8, id="ivf-flat"),
+    pytest.param(lambda: HNSWIndex(m=8, ef_construction=200, seed=1), 200, id="hnsw"),
 ]
 
 
