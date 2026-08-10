@@ -31,6 +31,12 @@ INDEXES: list[tuple[str, Factory, int | None]] = [
 
 PARAMS = [pytest.param(f, e, id=name) for name, f, e in INDEXES]
 
+# Indexes with in-index filtering implemented. HNSW joins in Block 4.
+FILTER_CAPABLE = [
+    pytest.param(BruteForceIndex, None, id="brute-force"),
+    pytest.param(lambda: IVFFlatIndex(n_lists=8, seed=0), 8, id="ivf-flat"),
+]
+
 
 def unit(v: np.ndarray) -> np.ndarray:
     v = np.asarray(v, dtype=np.float32)
@@ -167,3 +173,39 @@ def test_ids_are_preserved_across_generated_corpora(
     assert len(hits) == min(k, n)
     assert {h.id for h in hits} <= set(ids.tolist())
     assert len({h.id for h in hits}) == len(hits)  # no duplicates returned
+
+
+@pytest.mark.parametrize(("factory", "exhaustive"), FILTER_CAPABLE)
+def test_filtered_search_matches_the_filtered_oracle(
+    factory: Factory, exhaustive: int | None, corpus: Corpus
+) -> None:
+    ids, vectors = corpus
+    admissible = set(ids[::4].tolist())
+
+    oracle = BruteForceIndex()
+    oracle.build(ids, vectors)
+    ix = factory()
+    ix.build(ids, vectors)
+
+    for q in vectors[:10]:
+        mine = [
+            h.distance
+            for h in ix.search(q, 5, effort=exhaustive, admissible=ix.compile_filter(admissible))
+        ]
+        truth = [
+            h.distance for h in oracle.search(q, 5, admissible=oracle.compile_filter(admissible))
+        ]
+        assert mine == pytest.approx(truth, abs=1e-5)
+
+
+@pytest.mark.parametrize(("factory", "exhaustive"), FILTER_CAPABLE)
+def test_filtered_search_never_returns_an_inadmissible_id(
+    factory: Factory, exhaustive: int | None, corpus: Corpus
+) -> None:
+    ids, vectors = corpus
+    admissible = set(ids[::3].tolist())
+    ix = factory()
+    ix.build(ids, vectors)
+    mask = ix.compile_filter(admissible)
+    for q in vectors[:10]:
+        assert {h.id for h in ix.search(q, 5, effort=exhaustive, admissible=mask)} <= admissible

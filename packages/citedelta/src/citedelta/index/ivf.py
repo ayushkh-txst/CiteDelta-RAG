@@ -62,6 +62,7 @@ class IVFFlatIndex:
         self._vectors: Vectors = np.zeros((0, 0), dtype=np.float32)
         self._ids: Ids = np.zeros(0, dtype=np.int64)
         self._offsets: np.ndarray = np.zeros(1, dtype=np.int64)
+        self._last_probes = 0
 
     @property
     def name(self) -> str:
@@ -127,6 +128,18 @@ class IVFFlatIndex:
     def compile_filter(self, admissible_ids: Collection[int]) -> BoolMask:
         return compile_mask(self._ids, admissible_ids)
 
+    @property
+    def last_probes_used(self) -> int:
+        """Cells probed by the most recent search.
+
+        Diagnostic only, and deliberately NOT thread-safe — it is mutable state
+        on a read-only index. The benchmark is single-threaded, so it is
+        correct there; a concurrent server would need this returned from
+        `search` instead of stashed. Flagging it rather than pretending the
+        index is immutable.
+        """
+        return self._last_probes
+
     def search(
         self,
         query: Vectors,
@@ -135,23 +148,26 @@ class IVFFlatIndex:
         effort: int | None = None,
         admissible: BoolMask | None = None,
     ) -> list[Neighbor]:
-        """`effort` is nprobe: how many cells to scan."""
+        """`effort` is nprobe. Under a filter it becomes a MINIMUM, not a fixed
+        budget: probing continues until k admissible candidates are found."""
         if self.size == 0 or k <= 0:
             return []
-        if admissible is not None:
-            msg = f"{self.name}: filtered search is not implemented"
-            raise NotImplementedError(msg)
+
         k = min(k, self.size)
         n_probe = effort or self._default_probe or max(1, self.n_lists // 16)
         n_probe = max(1, min(n_probe, self.n_lists))
 
         # Step 1: rank the cells. nlist dot products, cheap.
         centroid_distance = 1.0 - (self._centroids @ query)
-        probes = np.argpartition(centroid_distance, n_probe - 1)[:n_probe]
 
-        # Step 2: gather the probed cells' rows. They're contiguous per cell.
-        spans = [np.arange(self._offsets[c], self._offsets[c + 1]) for c in probes]
-        candidates = np.concatenate(spans) if spans else np.zeros(0, dtype=np.int64)
+        if admissible is None:
+            probes = np.argpartition(centroid_distance, n_probe - 1)[:n_probe]
+            spans = [np.arange(self._offsets[c], self._offsets[c + 1]) for c in probes]
+            candidates = np.concatenate(spans) if spans else np.zeros(0, dtype=np.int64)
+            self._last_probes = n_probe
+        else:
+            candidates = self._probe_until_k(query, k, n_probe, centroid_distance, admissible)
+
         if candidates.size == 0:
             return []
 
@@ -164,6 +180,49 @@ class IVFFlatIndex:
         return [
             Neighbor(id=int(self._ids[candidates[i]]), distance=float(distances[i])) for i in order
         ]
+
+    def _probe_until_k(
+        self,
+        query: Vectors,
+        k: int,
+        min_probes: int,
+        centroid_distance: np.ndarray,
+        admissible: BoolMask,
+    ) -> np.ndarray:
+        """Walk cells nearest-first, keeping only admissible rows, until k found.
+
+        A FULL argsort of the centroids rather than argpartition: nlist is ~194,
+        so sorting costs microseconds, and we genuinely may need the complete
+        ordering — under a very selective filter this loop can walk every cell.
+        argpartition would only give the nearest `nprobe`, and then we would have
+        no defined order to continue in.
+
+        Correctness note: this returns the k nearest admissible rows *within the
+        probed cells*, which is still approximate. A closer admissible row can
+        sit in a cell we stopped before reaching. It stops being approximate
+        only when every cell is probed — the same guarantee unfiltered IVF has,
+        preserved rather than improved.
+        """
+        cell_order = np.argsort(centroid_distance)
+        collected: list[np.ndarray] = []
+        found = 0
+        probed = 0
+
+        for cell in cell_order:
+            lo = int(self._offsets[cell])
+            hi = int(self._offsets[cell + 1])
+            probed += 1
+            if hi > lo:
+                span = np.arange(lo, hi)
+                span = span[admissible[span]]
+                if span.size:
+                    collected.append(span)
+                    found += int(span.size)
+            if probed >= min_probes and found >= k:
+                break
+
+        self._last_probes = probed
+        return np.concatenate(collected) if collected else np.zeros(0, dtype=np.int64)
 
     def memory_bytes(self) -> int:
         return int(
