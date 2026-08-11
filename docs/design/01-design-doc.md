@@ -43,7 +43,7 @@ are all inadmissible.
 |---|---|---|
 | NFR-1 | p95 end-to-end query < 200 ms at 50 QPS, 4 vCPU | not yet measured |
 | NFR-2 | Lexical search p95 < 10 ms at 38,211 chunks | **measured: p95 8.9 ms** |
-| NFR-3 | Recall@10 ≥ 0.95 vs. the brute-force oracle | **measured: 1.000 (IVF-Flat nprobe=32; HNSW ef=32 on dedup). Under the 1.9% temporal filter: 0.949 (IVF), 1.000 (brute) — HNSW caps at 0.484, a data property (see ADR-0012)** |
+| NFR-3 | Recall@10 ≥ 0.95 vs. the brute-force oracle | **measured: 1.000 (IVF-Flat nprobe=32; HNSW ef=32 on dedup). Under the 1.9% temporal filter: 0.949 (IVF), 1.000 (brute) — HNSW caps at 0.484, a construction defect, not a data property (see ADR-0012)** |
 | NFR-4 | Citation validity = 1.00 (a fabricated citation is a hard failure) | planned |
 | NFR-5 | Ingestion resumes from worker loss with no duplication or loss | **proved** (`chaos/kill_worker_mid_ingest.py`) |
 | NFR-6 | Full rebuild from empty database in < 10 min, cache warm | **measured: 2.8 s ingest + 2.5 s index** |

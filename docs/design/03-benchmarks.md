@@ -133,6 +133,24 @@ recall@10 ≈ 0.88 even at large ef, but hnswlib exhibits the same ceiling —
 those three random-hard rows are where the knobs demonstrable a real tradeoff, not
 the implementation's fault.
 
+> **Correction (Day 3 audit, 2026-08-11).** The "8k subsample" and
+> "hnswlib exhibits the same ceiling" statements above are **not
+> load-bearing at production scale.** The 8k subsample is the scale at
+> which *this* implementation's graph is still fully connected; the
+> full-scale comparison was never run. At the full 37,911-vector corpus
+> the two implementations diverge sharply under a filter (this one
+> 0.397, hnswlib 0.978 at k=1,000 overfetch; in-index 0.484 vs 1.000).
+> The 0.88 ceiling is a graph-fragmentation artifact of this
+> implementation's construction, not a property of the data — see the
+> temporal-pushdown section above. The unfiltered number at full scale
+> is 0.918 vs hnswlib 1.000 (tie-aware, ef=256), so unfiltered recall is
+> not where the divergence lives either. Connectivity was re-measured
+> directly on the real embeddings (2026-08-11): 100% connected at
+> N=8,000, 65.1% at N=20,000, 62.5% at N=38,000 — so the graph stops
+> being fully connected somewhere before 20k and the fragmentation
+> (up to ~5,400 components) is a construction defect, not a data
+> property.
+
 `hnswlib` is a **dev dependency used as a test oracle**, not part of the
 product and not in the query path — the same role the brute-force scan plays
 for the lexical index. The comparison exists because "my index gets 0.48" is
@@ -272,10 +290,38 @@ index. `post-filter+overfetch` restores accuracy but pays for it in throughput
 or tails. `in-index` holds recall substantially flat with sub-linear work. The
 starred point — the real temporal filter — sits **at or slightly above** the
 synthetic curve at equal selectivity: on this corpus temporal admissibility is
-not more adversarial than a random subset. HNSW's in-index ceiling (~0.48) is
-the reachability ceiling of §"why the graph walk cannot be pruned", the same
-ceiling the day-2 reference cross-check confirmed in `hnswlib`; IVF and
-brute-force are unaffected because they do not rely on a walk. Full data:
+not more adversarial than a random subset. IVF and brute-force hold recall
+under a filter because they do not rely on a walk.
+
+**HNSW's in-index ceiling (~0.48) is a graph-construction bug, not a
+reachability ceiling of the data.** Subsequent investigation at full scale
+(full 37,911-vector corpus, identical parameters, same filtered brute-force
+oracle) established three things:
+
+1. The built layer-0 graph is fragmented: **5,427 disconnected components,
+   the largest holding only 62.5% of nodes** — 37.5% of the corpus is
+   unreachable from the entry point by any search, filtered or not. The
+   fragmentation scales with corpus size on the real embeddings (100%
+   connected at N≈8,000 → ~65% at N≈20,000 → ~62.5% at N≈38,000) — the same
+   duplication ratio, the same code, degrading as the graph grows.
+2. The consequence is visible even *without* a filter. Fetching k=1,000
+   candidates (2.6% of the corpus) and post-filtering against the same
+   oracle: this implementation plateaus at **recall 0.397**, while `hnswlib`
+   on the identical corpus reaches **0.978**. No amount of overfetching can
+   recover admissible rows that live in disconnected components.
+3. The construction code has **no connectivity guarantee**: `_insert` never
+   verifies that a newly wired node can reach the graph's entry point, and
+   the reverse-link pruning (hnsw.py, "keep the graph symmetric") is free to
+   strip the long-range bridges that duplicate-heavy clusters would otherwise
+   carry. The corpus is 21.7× duplicated; a cluster saturates its own edge
+   budget with near-zero-distance links before a bridge to the rest of the
+   graph can survive.
+
+The day-2 reference cross-check that "confirmed `hnswlib` has the same
+ceiling" ran on an **8,000-vector subsample** — exactly the scale where this
+implementation's graph is still fully connected — so the comparison never
+exercised the failure regime. Re-run at full scale, the reference has no such
+ceiling. Full data:
 [`selectivity-sweep.json`](benchmarks/selectivity-sweep.json).
 
 ### Costs of pushdown, stated plainly
