@@ -476,12 +476,46 @@ def ask(
             f"({admissible.selectivity:.2%})  "
             f"lexical={trace.candidates_lexical} vector={trace.candidates_vector}\n"
         )
-        for rank, hit in enumerate(trace.hits, 1):
-            citation, frm, to, text = rows.get(hit.chunk_id, ("?", None, None, ""))
-            provenance = " ".join(f"{name}#{r}" for name, r in sorted(hit.ranks.items()))
-            typer.echo(f"{rank}. {citation}")
-            typer.echo(f"   in force {frm} .. {to or 'current'}   [{provenance}]")
-            typer.echo(f"   {text[:200]}\u2026\n")
+
+        from citedelta.answer.models import Citation
+        from citedelta.answer.service import AnswerService
+        from substrate.llm.anthropic_adapter import AnthropicCompletions
+
+        candidates = [
+            Citation(
+                chunk_id=h.chunk_id,
+                citation_path=rows[h.chunk_id][0],
+                effective_from=rows[h.chunk_id][1].isoformat(),
+                effective_to=(rows[h.chunk_id][2].isoformat() if rows[h.chunk_id][2] else None),
+                text=rows[h.chunk_id][3],
+                rrf_score=h.score,
+                ranks=dict(h.ranks),
+            )
+            for h in trace.hits
+            if h.chunk_id in rows
+        ]
+
+        if not settings.anthropic_api_key:
+            typer.secho(
+                "No anthropic_api_key in .env — showing retrieved chunks only.",
+                fg=typer.colors.YELLOW,
+            )
+            for c in candidates:
+                typer.echo(f"[{c.chunk_id}] {c.citation_path}  ({c.in_force_label})")
+            return
+
+        llm = AnthropicCompletions(api_key=settings.anthropic_api_key)
+        service = AnswerService(llm, model=settings.llm_model)
+        result = await service.answer(trace=trace, candidates=candidates, admissible=admissible)
+
+        if result.refused:
+            typer.secho(f"\nNo answer — {result.reason.value}", fg=typer.colors.YELLOW)
+            typer.echo(result.detail)
+        else:
+            typer.echo(f"\n{result.text}\n")
+            for c in result.citations:
+                typer.echo(f"  [{c.chunk_id}] {c.citation_path}  ({c.in_force_label})")
+        typer.secho(f"\n{result.latency_ms:.0f} ms · ${result.cost_usd}", fg=typer.colors.BLUE)
         typer.echo("Not legal advice. Verify against the official eCFR.")
 
     asyncio.run(main())
