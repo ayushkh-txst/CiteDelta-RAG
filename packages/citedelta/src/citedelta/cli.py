@@ -521,5 +521,25 @@ def ask(
     asyncio.run(main())
 
 
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    reload: bool = typer.Option(False, "--reload"),
+) -> None:
+    """Run the HTTP API."""
+    import uvicorn
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    uvicorn.run(
+        "citedelta.api.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
 if __name__ == "__main__":
     app()

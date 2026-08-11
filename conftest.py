@@ -21,7 +21,15 @@ DEV_DSN = os.environ.get(
     "DATABASE_URL", "postgresql://citedelta:citedelta@localhost:5434/citedelta"
 )
 
-TABLES = ("jobs", "chunks", "section_versions", "documents", "sources", "embeddings")
+TABLES = (
+    "query_traces",
+    "jobs",
+    "chunks",
+    "section_versions",
+    "documents",
+    "sources",
+    "embeddings",
+)
 
 
 def _derive_test_dsn(dsn: str) -> str:
