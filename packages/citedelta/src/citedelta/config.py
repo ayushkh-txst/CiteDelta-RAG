@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://citedelta:citedelta@localhost:5434/citedelta"
     data_dir: Path = Path("./data")
     log_level: str = "info"
+    anthropic_api_key: str = ""
+    llm_model: str = "claude-opus-5"
+    llm_max_tokens: int = 2048
 
     @property
     def sqlalchemy_url(self) -> str:

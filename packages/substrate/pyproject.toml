@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Durable job queue, resilience primitives, observability. Hand-written, not imported."
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.121",
     "asyncpg>=0.30",
     "pydantic>=2.9",
     "structlog>=24.4",

@@ -133,7 +133,7 @@ recall@10 ≈ 0.88 even at large ef, but hnswlib exhibits the same ceiling —
 those three random-hard rows are where the knobs demonstrable a real tradeoff, not
 the implementation's fault.
 
-> **Correction (Day 3 audit, 2026-08-11).** The "8k subsample" and
+> **Correction (audited 2026-08-11).** The "8k subsample" and
 > "hnswlib exhibits the same ceiling" statements above are **not
 > load-bearing at production scale.** The 8k subsample is the scale at
 > which *this* implementation's graph is still fully connected; the
