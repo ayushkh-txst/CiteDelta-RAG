@@ -36,5 +36,25 @@
   </div>
 </form>
 
-<div id="result">{% block result %}{% endblock %}</div>
+<div id="result">{% block result %}
+  {% if not result %}
+  <div class="card">
+    <h2>Try one of these</h2>
+    <div class="presets">
+      {% for q in example_queries %}
+        <button class="preset" type="button"
+                onclick="document.getElementById('q').value={{ q|tojson }};
+                         htmx.trigger('.askbar','submit')">{{ q }}</button>
+      {% endfor %}
+    </div>
+    <p class="trace-note">
+      Indexed: 8 CFR Part 214 (nonimmigrant classes), {{ corpus_size }} passages
+      across {{ snapshot_count }} snapshots from {{ min_as_of }} to today. Pick any
+      date and the answer reflects the regulation as it stood then.
+    </p>
+  </div>
+  {% endif %}
+{% endblock %}</div>
+
+{% include "partials/calculator.html" %}
 {% endblock %}

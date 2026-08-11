@@ -135,6 +135,13 @@ button.primary {
 }
 .asof-banner strong { color: var(--ink); font-variant-numeric: tabular-nums; }
 
+.page-label {
+  margin: 0 0 var(--s4); padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--rule);
+  font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--faint); font-weight: 700;
+}
+
 /* ── Cards ────────────────────────────────────────────────────── */
 .card {
   background: var(--surface); border: 1px solid var(--rule);

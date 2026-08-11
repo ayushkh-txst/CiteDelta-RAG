@@ -32,6 +32,9 @@ class AppState:
     """Earliest date the corpus can answer from. Dates before this always
     refuse, so the UI's as-of input floors at it rather than promising dates
     the data can't deliver."""
+    snapshot_count: int
+    """Number of distinct effective dates in the corpus — how many times the
+    regulation was captured."""
 
 
 async def build_state(settings: Settings) -> AppState:
@@ -47,10 +50,13 @@ async def build_state(settings: Settings) -> AppState:
 
     async with db.acquire() as conn:
         corpus_since = await conn.fetchval("SELECT min(effective_from) FROM section_versions")
+        snapshot_count = await conn.fetchval(
+            "SELECT count(DISTINCT effective_from) FROM section_versions"
+        )
     if corpus_since is None:
         log.warning("api.corpus_empty")
         corpus_since = date(2016, 1, 1)
-    log.info("api.corpus_since", since=str(corpus_since))
+    log.info("api.corpus_since", since=str(corpus_since), snapshots=snapshot_count)
 
     ids, vectors = await load_corpus_vectors()
     log.info("api.vectors_loaded", count=len(ids), mb=round(vectors.nbytes / 1e6, 1))
@@ -80,6 +86,7 @@ async def build_state(settings: Settings) -> AppState:
         answers=answers,
         corpus_size=len(ids),
         corpus_since=corpus_since,
+        snapshot_count=snapshot_count,
     )
 
 

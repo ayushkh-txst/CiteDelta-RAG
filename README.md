@@ -104,6 +104,24 @@ uv run citedelta index build
 uv run citedelta search "optional practical training stem extension"
 ```
 
+## Try it
+
+```bash
+uv run citedelta serve
+open http://127.0.0.1:8000
+```
+
+The canonical demo query is **"Can an F-1 student transfer to another school?"**
+compared across two dates — the transfer procedure was rewritten in the 2020s to
+require the SEVIS transfer-release-date process and successor-form language:
+
+- [`/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11`](http://127.0.0.1:8000/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11)
+
+The 2016 answer describes a simple notification-and-I-20 procedure; the 2026
+answer runs through the transfer-out / transfer-in release-date sequence and the
+15-day contact rule. The `<del>` / `<ins>` highlight is the bitemporal schema
+rendered as text.
+
 ## Docs
 
 [Design doc](docs/design/01-design-doc.md) ·

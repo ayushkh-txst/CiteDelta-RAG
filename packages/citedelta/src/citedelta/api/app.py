@@ -25,6 +25,7 @@ from citedelta.config import get_settings
 from citedelta.retrieve import RetrievalTrace, hybrid_search
 from citedelta.temporal import AdmissibleSet
 from citedelta.web.copy import REFUSAL_HELP, REFUSAL_LABELS
+from citedelta.web.diff import diff_pair
 from citedelta.web.filters import citation_chips
 from citedelta.web.ribbon import build_ribbon
 from substrate.obs import new_run_id
@@ -41,6 +42,12 @@ templates = Jinja2Templates(directory=str(WEB / "templates"))
 templates.env.filters["citation_chips"] = citation_chips
 templates.env.globals["REFUSAL_LABELS"] = REFUSAL_LABELS
 templates.env.globals["REFUSAL_HELP"] = REFUSAL_HELP
+
+EXAMPLE_QUERIES = (
+    "Can an F-1 student transfer to another school?",
+    "What is the grace period after F-1 program completion?",
+    "What is the duration of a student's practical training?",
+)
 
 
 class AskRequest(BaseModel):
@@ -201,6 +208,8 @@ async def index(request: Request) -> HTMLResponse:
             "min_as_of": state.corpus_since.isoformat(),
             "presets": _presets(today, state.corpus_since),
             "query": None,
+            "example_queries": EXAMPLE_QUERIES,
+            "snapshot_count": state.snapshot_count,
         },
     )
 
@@ -244,6 +253,45 @@ async def ui_ask(
             "cited_ids": cited_ids,
             "cited_index": cited_index,
             "max_score": max_score,
+            "corpus_since": state.corpus_since.isoformat(),
+        },
+    )
+
+
+@router.get("/compare", response_class=HTMLResponse)
+async def compare(
+    request: Request,
+    query: str,
+    left: date,
+    right: date,
+) -> HTMLResponse:
+    """Same question, two dates. Two full runs, deliberately.
+
+    Not a cached re-render of one run: the two dates have different admissible
+    sets, so retrieval genuinely differs. Reusing one result and re-filtering
+    it afterwards would be post-filtering — the exact mistake the temporal
+    benchmarks measured the cost of.
+    """
+    state = ctx(request)
+    a = await _run_ask(state, AskRequest(query=query, as_of=left))
+    b = await _run_ask(state, AskRequest(query=query, as_of=right))
+
+    left_html = right_html = None
+    if not a["result"].refused and not b["result"].refused:
+        left_html, right_html = diff_pair(a["result"].text, b["result"].text)
+
+    return templates.TemplateResponse(
+        request,
+        "compare.html",
+        {
+            "corpus_size": f"{state.corpus_size:,}",
+            "query": query,
+            "left": a,
+            "right": b,
+            "left_date": left.isoformat(),
+            "right_date": right.isoformat(),
+            "left_html": left_html,
+            "right_html": right_html,
         },
     )
 
