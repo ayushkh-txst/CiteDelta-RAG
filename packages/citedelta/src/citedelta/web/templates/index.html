@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+
+<form class="askbar"
+      hx-post="/ui/ask"
+      hx-target="#result"
+      hx-swap="innerHTML"
+      hx-indicator="#asking">
+  <div class="askrow">
+    <div class="q">
+      <label for="q">Question</label>
+      <input id="q" name="query" type="text" required minlength="3"
+             value="{{ query or '' }}"
+             placeholder="What is the grace period after F-1 program completion?">
+    </div>
+    <div class="d">
+      <label for="as_of">As of</label>
+      <input id="as_of" name="as_of" type="date" value="{{ as_of }}"
+             min="2016-01-01" max="{{ today }}">
+    </div>
+    <div class="go">
+      <button class="primary" type="submit">
+        <span class="htmx-indicator-hide">Ask</span>
+        <span id="asking" class="htmx-indicator">Asking…</span>
+      </button>
+    </div>
+  </div>
+  <div class="presets">
+    <span>Jump to</span>
+    {% for label, value in presets %}
+      <button class="preset" type="button"
+              onclick="document.getElementById('as_of').value='{{ value }}'">
+        {{ label }}
+      </button>
+    {% endfor %}
+  </div>
+</form>
+
+<div id="result">{% block result %}{% endblock %}</div>
+{% endblock %}

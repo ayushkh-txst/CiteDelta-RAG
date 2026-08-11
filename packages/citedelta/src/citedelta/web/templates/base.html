@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}CiteDelta{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <div class="logo">Cite<span class="delta">Δ</span></div>
+    <div class="tagline">US immigration regulations, as they stood on any date</div>
+    <div class="corpus">8 CFR Part 214 · {{ corpus_size }} chunks</div>
+  </header>
+  {% block content %}{% endblock %}
+</div>
+</body>
+</html>

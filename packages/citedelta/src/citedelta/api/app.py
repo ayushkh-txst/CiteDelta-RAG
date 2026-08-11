@@ -5,10 +5,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any, cast
 
 import structlog
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
 from starlette.responses import Response
@@ -20,6 +24,8 @@ from citedelta.bench.temporal import load_admissible
 from citedelta.config import get_settings
 from citedelta.retrieve import RetrievalTrace, hybrid_search
 from citedelta.temporal import AdmissibleSet
+from citedelta.web.copy import REFUSAL_HELP, REFUSAL_LABELS
+from citedelta.web.filters import citation_chips
 from substrate.obs import new_run_id
 
 log = structlog.get_logger(__name__)
@@ -28,6 +34,12 @@ ASKS = Counter("citedelta_asks_total", "Questions asked", ["outcome"])
 LATENCY = Histogram("citedelta_ask_seconds", "End-to-end /ask latency")
 
 router = APIRouter()
+
+WEB = Path(__file__).resolve().parent.parent / "web"
+templates = Jinja2Templates(directory=str(WEB / "templates"))
+templates.env.filters["citation_chips"] = citation_chips
+templates.env.globals["REFUSAL_LABELS"] = REFUSAL_LABELS
+templates.env.globals["REFUSAL_HELP"] = REFUSAL_HELP
 
 
 class AskRequest(BaseModel):
@@ -82,6 +94,41 @@ async def metrics() -> Response:
 @router.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest, request: Request) -> AskResponse:
     state = ctx(request)
+    payload = await _run_ask(state, body)
+    result = payload["result"]
+
+    if isinstance(result, Answer):
+        return AskResponse(
+            trace_id=payload["trace_id"],
+            refused=False,
+            as_of=result.as_of,
+            answer=result.text,
+            citations=[
+                {
+                    "chunk_id": c.chunk_id,
+                    "citation_path": c.citation_path,
+                    "in_force": c.in_force_label,
+                    "text": c.text,
+                }
+                for c in result.citations
+            ],
+            latency_ms=result.latency_ms,
+            cost_usd=str(result.cost_usd),
+        )
+
+    return AskResponse(
+        trace_id=payload["trace_id"],
+        refused=True,
+        as_of=result.as_of,
+        refusal_reason=result.reason.value,
+        refusal_detail=result.detail,
+        latency_ms=result.latency_ms,
+        cost_usd=str(result.cost_usd),
+    )
+
+
+async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
+    """The one code path behind both /ask and /ui/ask."""
     run_id = new_run_id()
     as_of = body.as_of or datetime.now(UTC).date()
 
@@ -121,34 +168,66 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
         )
 
     ASKS.labels(outcome="refused" if result.refused else "answered").inc()
+    return {
+        "result": result,
+        "candidates": candidates,
+        "trace_id": trace_id,
+        "selectivity": len(admissible.ids) / admissible.corpus_size,
+    }
 
-    if isinstance(result, Answer):
-        return AskResponse(
-            trace_id=trace_id,
-            refused=False,
-            as_of=result.as_of,
-            answer=result.text,
-            citations=[
-                {
-                    "chunk_id": c.chunk_id,
-                    "citation_path": c.citation_path,
-                    "in_force": c.in_force_label,
-                    "text": c.text,
-                }
-                for c in result.citations
-            ],
-            latency_ms=result.latency_ms,
-            cost_usd=str(result.cost_usd),
-        )
 
-    return AskResponse(
-        trace_id=trace_id,
-        refused=True,
-        as_of=result.as_of,
-        refusal_reason=result.reason.value,
-        refusal_detail=result.detail,
-        latency_ms=result.latency_ms,
-        cost_usd=str(result.cost_usd),
+def _presets(today: date) -> list[tuple[str, str]]:
+    return [
+        ("Today", today.isoformat()),
+        ("2019", "2019-06-01"),
+        ("2016", "2016-06-01"),
+    ]
+
+
+@router.get("/", response_class=HTMLResponse)
+async def index(request: Request) -> HTMLResponse:
+    today = datetime.now(UTC).date()
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "corpus_size": f"{ctx(request).corpus_size:,}",
+            "as_of": today.isoformat(),
+            "today": today.isoformat(),
+            "presets": _presets(today),
+            "query": None,
+        },
+    )
+
+
+@router.post("/ui/ask", response_class=HTMLResponse)
+async def ui_ask(
+    request: Request,
+    query: str = Form(...),
+    as_of: date | None = Form(None),  # noqa: B008 - FastAPI form metadata
+) -> HTMLResponse:
+    """The HTML twin of POST /ask.
+
+    Deliberately a separate route rather than content-negotiation on /ask.
+    The JSON API and the HTML UI have genuinely different contracts — the API
+    returns a trace_id, the UI returns rendered candidates — and one handler
+    branching on an Accept header to serve two contracts is how endpoints
+    become unmaintainable.
+    """
+    state = ctx(request)
+    body = AskRequest(query=query, as_of=as_of)
+    payload = await _run_ask(state, body)
+
+    return templates.TemplateResponse(
+        request,
+        "partials/answer.html",
+        {
+            "result": payload["result"],
+            "selectivity": payload["selectivity"],
+            "candidate_count": len(payload["candidates"]),
+            "candidates": payload["candidates"],
+            "trace_id": payload["trace_id"],
+        },
     )
 
 
@@ -208,4 +287,5 @@ def _jsonable(value: Any) -> Any:
 def create_app() -> FastAPI:
     app = FastAPI(title="CiteDelta", lifespan=lifespan)
     app.include_router(router)
+    app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
     return app
