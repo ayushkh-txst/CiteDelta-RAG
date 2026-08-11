@@ -1,10 +1,43 @@
 # CiteDelta
 
-Time-aware search over versioned regulations. Every answer carries an effective
-date and a citation to the CFR.
+Bitemporal hybrid search over US immigration regulations. Ask a question, get an
+answer with citations you can verify — **as the regulation stood on any date
+since 2016**.
 
-Ask for §214.1 as of 2019-06-01 and you get the 2019 text. The temporal
-predicate is part of the index, not a filter bolted on afterwards.
+![Same question, two dates](docs/images/diff.png)
+
+Every index, the queue, the fusion, and the temporal filtering are hand-written.
+No vector database, no LangChain, no ORM.
+
+## What it does
+
+- **Time travel.** Any as-of date. Retrieval is filtered *inside* the index, not
+  after it — post-filtering collapses at this corpus's ~2% selectivity, and
+  [03-benchmarks.md](docs/design/03-benchmarks.md) has the measurement.
+- **Cite or refuse.** Every citation is checked against the retrieved set and
+  the admissible set. One bad citation discards the whole answer.
+- **A visible trace.** Every candidate the retriever considered, both retrievers'
+  ranks, the fused score — including the ones that weren't cited.
+
+![Retrieval trace](docs/images/trace.png)
+
+## Try it
+
+```bash
+uv run citedelta serve
+open http://127.0.0.1:8000
+```
+
+The canonical demo query is **"Can an F-1 student transfer to another school?"**
+compared across two dates — the transfer procedure was rewritten in the 2020s to
+require the SEVIS transfer-release-date process and successor-form language:
+
+- [`/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11`](http://127.0.0.1:8000/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11)
+
+The 2016 answer describes a simple notification-and-I-20 procedure; the 2026
+answer runs through the transfer-out / transfer-in release-date sequence and the
+15-day contact rule. The `<del>` / `<ins>` highlight is the bitemporal schema
+rendered as text.
 
 ## Background
 
@@ -19,16 +52,15 @@ has two defensible answers, and a compliance product needs both:
 
 34 of the records in 8 CFR Part 214 carry this gap. This project models both.
 
-## What's in here
+## Built by hand
 
-The point of the project is building retrieval machinery instead of importing
-it. Everything listed is written from scratch:
-
-- Durable job queue on Postgres: `SKIP LOCKED`, leases, fencing tokens, DLQ
-- Bitemporal schema with a GiST exclusion constraint
-- Inverted index: varint postings, mmap, BM25
-- Three ANN indexes — brute force, IVF-Flat, HNSW — behind one protocol
-- Temporal predicate pushdown inside every index, measured against post-filter
+| Component | Notes |
+|---|---|
+| Inverted index | Delta-gapped varint postings, mmap, BM25 |
+| Vector indexes | Brute force · IVF-Flat · HNSW, one protocol, one conformance suite |
+| Temporal filter | Compiled to a bitmask, pushed into each index's traversal |
+| Job queue | Postgres `FOR UPDATE SKIP LOCKED`, leases, fencing tokens, DLQ |
+| Fusion | RRF, order-invariance property-tested |
 
 ## The result this project exists to produce
 
@@ -104,23 +136,8 @@ uv run citedelta index build
 uv run citedelta search "optional practical training stem extension"
 ```
 
-## Try it
-
-```bash
-uv run citedelta serve
-open http://127.0.0.1:8000
-```
-
-The canonical demo query is **"Can an F-1 student transfer to another school?"**
-compared across two dates — the transfer procedure was rewritten in the 2020s to
-require the SEVIS transfer-release-date process and successor-form language:
-
-- [`/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11`](http://127.0.0.1:8000/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11)
-
-The 2016 answer describes a simple notification-and-I-20 procedure; the 2026
-answer runs through the transfer-out / transfer-in release-date sequence and the
-15-day contact rule. The `<del>` / `<ins>` highlight is the bitemporal schema
-rendered as text.
+Set `anthropic_api_key` in `.env` for generated answers; without it, retrieval
+still works and returns ranked passages.
 
 ## Docs
 
@@ -130,4 +147,5 @@ rendered as text.
 [AI usage](docs/ai-usage.md)
 
 ---
+
 *Not legal advice. Regulatory text is reproduced from the public eCFR API.*
