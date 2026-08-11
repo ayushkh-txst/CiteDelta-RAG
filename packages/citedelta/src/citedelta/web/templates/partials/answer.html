@@ -37,3 +37,8 @@
   {% endfor %}
 </div>
 {% endif %}
+
+{% if not result.refused %}
+  {% include "partials/ribbon.html" %}
+{% endif %}
+{% include "partials/trace.html" %}

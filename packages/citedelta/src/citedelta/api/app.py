@@ -26,6 +26,7 @@ from citedelta.retrieve import RetrievalTrace, hybrid_search
 from citedelta.temporal import AdmissibleSet
 from citedelta.web.copy import REFUSAL_HELP, REFUSAL_LABELS
 from citedelta.web.filters import citation_chips
+from citedelta.web.ribbon import build_ribbon
 from substrate.obs import new_run_id
 
 log = structlog.get_logger(__name__)
@@ -176,25 +177,29 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
     }
 
 
-def _presets(today: date) -> list[tuple[str, str]]:
+def _presets(today: date, corpus_since: date) -> list[tuple[str, str]]:
     return [
         ("Today", today.isoformat()),
         ("2019", "2019-06-01"),
-        ("2016", "2016-06-01"),
+        # "2016" must land inside the corpus, not in the gap before it — a
+        # preset that always refused would look like a bug.
+        ("2016", max(date(2016, 6, 1), corpus_since).isoformat()),
     ]
 
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
+    state = ctx(request)
     today = datetime.now(UTC).date()
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "corpus_size": f"{ctx(request).corpus_size:,}",
+            "corpus_size": f"{state.corpus_size:,}",
             "as_of": today.isoformat(),
             "today": today.isoformat(),
-            "presets": _presets(today),
+            "min_as_of": state.corpus_since.isoformat(),
+            "presets": _presets(today, state.corpus_since),
             "query": None,
         },
     )
@@ -218,15 +223,27 @@ async def ui_ask(
     body = AskRequest(query=query, as_of=as_of)
     payload = await _run_ask(state, body)
 
+    result = payload["result"]
+    as_of_date = body.as_of or datetime.now(UTC).date()
+    citations = list(result.citations) if isinstance(result, Answer) else []
+    ribbon = build_ribbon(citations, as_of=as_of_date)
+    cited_ids = [c.chunk_id for c in citations]
+    cited_index = {c.chunk_id: i + 1 for i, c in enumerate(citations)}
+    max_score = max((c.rrf_score for c in payload["candidates"]), default=1.0) or 1.0
+
     return templates.TemplateResponse(
         request,
         "partials/answer.html",
         {
-            "result": payload["result"],
+            "result": result,
             "selectivity": payload["selectivity"],
             "candidate_count": len(payload["candidates"]),
             "candidates": payload["candidates"],
             "trace_id": payload["trace_id"],
+            "ribbon": ribbon,
+            "cited_ids": cited_ids,
+            "cited_index": cited_index,
+            "max_score": max_score,
         },
     )
 

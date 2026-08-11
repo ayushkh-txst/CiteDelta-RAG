@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 import structlog
 
@@ -27,6 +28,10 @@ class AppState:
     embeddings: LocalEmbeddings
     answers: AnswerService
     corpus_size: int
+    corpus_since: date
+    """Earliest date the corpus can answer from. Dates before this always
+    refuse, so the UI's as-of input floors at it rather than promising dates
+    the data can't deliver."""
 
 
 async def build_state(settings: Settings) -> AppState:
@@ -39,6 +44,13 @@ async def build_state(settings: Settings) -> AppState:
     # generator's finally block and closes the pool we just built.
     db = Database(settings.database_url)
     await db.connect()
+
+    async with db.acquire() as conn:
+        corpus_since = await conn.fetchval("SELECT min(effective_from) FROM section_versions")
+    if corpus_since is None:
+        log.warning("api.corpus_empty")
+        corpus_since = date(2016, 1, 1)
+    log.info("api.corpus_since", since=str(corpus_since))
 
     ids, vectors = await load_corpus_vectors()
     log.info("api.vectors_loaded", count=len(ids), mb=round(vectors.nbytes / 1e6, 1))
@@ -67,6 +79,7 @@ async def build_state(settings: Settings) -> AppState:
         embeddings=embeddings,
         answers=answers,
         corpus_size=len(ids),
+        corpus_since=corpus_since,
     )
 
 

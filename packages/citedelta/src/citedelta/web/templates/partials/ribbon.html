@@ -1,0 +1,38 @@
+<div class="card">
+  <h2>When these provisions were in force</h2>
+  <div class="ribbon">
+    <svg viewBox="0 0 860 {{ ribbon.height }}" role="img"
+         aria-label="Timeline showing when each cited provision was in force,
+                     with a marker at {{ ribbon.marker_label }}.">
+      <g class="rib-tick">
+        {% for x, year in ribbon.ticks %}
+          <text x="{{ x }}" y="12" text-anchor="middle">{{ year }}</text>
+        {% endfor %}
+      </g>
+      <line class="rib-axis" x1="{{ ribbon.axis_x0 }}" y1="20"
+                             x2="{{ ribbon.axis_x1 }}" y2="20"></line>
+
+      {% for bar in ribbon.bars %}
+        {% set y = 20 + loop.index * 32 %}
+        <text class="rib-label" x="0" y="{{ y + 10 }}">{{ bar.label }}</text>
+        <rect class="rib-bar {% if not bar.in_force %}gone{% endif %}"
+              x="{{ bar.x }}" y="{{ y }}" width="{{ bar.width }}" height="14">
+          <title>{{ bar.title }}</title>
+        </rect>
+      {% endfor %}
+
+      <line class="rib-marker" x1="{{ ribbon.marker_x }}" y1="16"
+            x2="{{ ribbon.marker_x }}" y2="{{ ribbon.height - 8 }}"></line>
+      <text class="rib-marker-label" x="{{ ribbon.marker_x - 5 }}"
+            y="{{ ribbon.height - 2 }}" text-anchor="end">
+        {{ ribbon.marker_label }}
+      </text>
+    </svg>
+    <div class="rib-legend">
+      <span><i style="background:var(--inforce)"></i>In force on the selected date</span>
+      {% if ribbon.has_superseded %}
+      <span><i style="background:var(--superseded);opacity:.5"></i>Superseded — excluded from retrieval</span>
+      {% endif %}
+    </div>
+  </div>
+</div>

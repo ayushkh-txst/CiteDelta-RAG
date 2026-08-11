@@ -16,7 +16,7 @@
     <div class="d">
       <label for="as_of">As of</label>
       <input id="as_of" name="as_of" type="date" value="{{ as_of }}"
-             min="2016-01-01" max="{{ today }}">
+             min="{{ min_as_of }}" max="{{ today }}">
     </div>
     <div class="go">
       <button class="primary" type="submit">

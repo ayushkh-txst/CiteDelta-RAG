@@ -1,0 +1,46 @@
+<details class="trace">
+  <summary>
+    Retrieval trace — {{ candidates|length }} candidates,
+    {{ cited_ids|length }} cited
+  </summary>
+  <div class="trace-body">
+    <table class="trace-table">
+      <thead>
+        <tr>
+          <th><span class="sr-only">Cited</span></th>
+          <th>Citation</th><th>BM25</th><th>Vector</th>
+          <th>RRF score</th><th>In force</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in candidates %}
+        {% set cited = c.chunk_id in cited_ids %}
+        <tr class="{% if not cited %}uncited{% endif %}"
+            {% if cited %}id="cite-{{ cited_index[c.chunk_id] }}"{% endif %}>
+          <td class="cited-dot">{% if cited %}●{% endif %}</td>
+          <td class="path">{{ c.citation_path.replace('8 CFR ', '') }}</td>
+          <td>{% if c.ranks.lexical %}{{ c.ranks.lexical }}
+              {% else %}<span class="rank-none">—</span>{% endif %}</td>
+          <td>{% if c.ranks.vector %}{{ c.ranks.vector }}
+              {% else %}<span class="rank-none">—</span>{% endif %}</td>
+          <td>
+            <span class="scorebar">
+              <span class="track">
+                <span class="fill" style="width:{{ (c.rrf_score / max_score * 100)|round|int }}%"></span>
+              </span>
+              {{ '%.4f'|format(c.rrf_score) }}
+            </span>
+          </td>
+          <td>{{ c.in_force_label }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="trace-note">
+      Rows without a dot were retrieved but not cited — they were shown to the
+      model and it chose not to use them. A dash means that retriever never
+      returned the chunk at all. That disagreement is what fusion exists to
+      resolve.
+    </p>
+  </div>
+</details>
