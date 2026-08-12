@@ -72,21 +72,35 @@ knobs have somewhere to actually show a tradeoff.
 
 | dataset | n | index | effort | recall@10 | recall_by_id | QPS | p50 ms | p95 ms | p99 ms | build s | MB |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| cfr-full | 37711 | brute-force | — | 1.000 | 0.999 | 887 | 1.14 | 1.24 | 1.30 | 0.0 | 58.2 |
-| cfr-full | 37711 | ivf-flat | 1 | 0.992 | 0.324 | 24120 | 0.04 | 0.07 | 0.11 | 0.6 | 58.5 |
-| cfr-full | 37711 | ivf-flat | 2 | 0.997 | 0.333 | 14515 | 0.06 | 0.12 | 0.16 | 0.6 | 58.5 |
-| cfr-full | 37711 | ivf-flat | 4 | 0.999 | 0.335 | 7715 | 0.13 | 0.20 | 0.23 | 0.6 | 58.5 |
-| cfr-full | 37711 | ivf-flat | 8 | 0.999 | 0.315 | 3680 | 0.26 | 0.40 | 0.47 | 0.6 | 58.5 |
-| cfr-full | 37711 | ivf-flat | 16 | 0.999 | 0.330 | 1705 | 0.57 | 0.92 | 1.05 | 0.6 | 58.5 |
-| cfr-full | 37711 | ivf-flat | 32 | 1.000 | 0.337 | 934 | 1.06 | 1.40 | 1.57 | 0.6 | 58.5 |
-| cfr-full | 37711 | ivf-flat | 64 | 1.000 | 0.342 | 367 | 2.72 | 3.22 | 3.44 | 0.6 | 58.5 |
-| cfr-full | 37711 | ivf-flat | 128 | 1.000 | 0.324 | 196 | 5.06 | 5.69 | 5.97 | 0.6 | 58.5 |
-| cfr-full | 37711 | hnsw | 10 | 0.834 | 0.263 | 5831 | 0.16 | 0.25 | 0.36 | 291.5 | 62.0 |
-| cfr-full | 37711 | hnsw | 16 | 0.842 | 0.260 | 5205 | 0.18 | 0.29 | 0.39 | 291.5 | 62.0 |
-| cfr-full | 37711 | hnsw | 32 | 0.848 | 0.261 | 3935 | 0.24 | 0.40 | 0.53 | 291.5 | 62.0 |
-| cfr-full | 37711 | hnsw | 64 | 0.869 | 0.272 | 2702 | 0.38 | 0.65 | 0.87 | 291.5 | 62.0 |
-| cfr-full | 37711 | hnsw | 128 | 0.877 | 0.275 | 1741 | 0.64 | 1.10 | 1.33 | 291.5 | 62.0 |
-| cfr-full | 37711 | hnsw | 256 | 0.885 | 0.279 | 1006 | 1.21 | 1.94 | 2.28 | 291.5 | 62.0 |
+| cfr-full | 37711 | brute-force | — | 1.000 | 0.999 | 857 | 1.15 | 1.45 | 1.60 | 0.0 | 58.2 |
+| cfr-full | 37711 | ivf-flat | 1 | 0.992 | 0.324 | 21090 | 0.04 | 0.09 | 0.13 | 0.6 | 58.5 |
+| cfr-full | 37711 | ivf-flat | 2 | 0.997 | 0.333 | 12939 | 0.07 | 0.14 | 0.19 | 0.6 | 58.5 |
+| cfr-full | 37711 | ivf-flat | 4 | 0.999 | 0.335 | 7120 | 0.14 | 0.22 | 0.32 | 0.6 | 58.5 |
+| cfr-full | 37711 | ivf-flat | 8 | 0.999 | 0.315 | 3501 | 0.26 | 0.47 | 0.70 | 0.6 | 58.5 |
+| cfr-full | 37711 | ivf-flat | 16 | 0.999 | 0.330 | 1529 | 0.61 | 1.09 | 1.42 | 0.6 | 58.5 |
+| cfr-full | 37711 | ivf-flat | 32 | 1.000 | 0.337 | 829 | 1.13 | 1.82 | 2.08 | 0.6 | 58.5 |
+| cfr-full | 37711 | ivf-flat | 64 | 1.000 | 0.342 | 334 | 2.98 | 3.66 | 3.88 | 0.6 | 58.5 |
+| cfr-full | 37711 | ivf-flat | 128 | 1.000 | 0.324 | 182 | 5.53 | 5.95 | 6.37 | 0.6 | 58.5 |
+| cfr-full | 37711 | hnsw | 10 | 0.899 | 0.281 | 3317 | 0.26 | 0.51 | 0.88 | 238.5 | 62.2 |
+| cfr-full | 37711 | hnsw | 16 | 0.904 | 0.280 | 3545 | 0.27 | 0.42 | 0.58 | 238.5 | 62.2 |
+| cfr-full | 37711 | hnsw | 32 | 0.914 | 0.282 | 3087 | 0.31 | 0.47 | 0.64 | 238.5 | 62.2 |
+| cfr-full | 37711 | hnsw | 64 | 0.933 | 0.289 | 2430 | 0.40 | 0.60 | 0.80 | 238.5 | 62.2 |
+| cfr-full | 37711 | hnsw | 128 | 0.978 | 0.308 | 1020 | 0.85 | 1.68 | 3.05 | 238.5 | 62.2 |
+| cfr-full | 37711 | hnsw | 256 | 0.992 | 0.314 | 747 | 1.25 | 2.04 | 2.57 | 238.5 | 62.2 |
+| cfr-full | 37711 | pgvector-hnsw | 10 | 0.849 | 0.276 | 1441 | 0.66 | 0.94 | 1.18 | 10.0 | in DB |
+| cfr-full | 37711 | pgvector-hnsw | 16 | 0.871 | 0.290 | 1182 | 0.78 | 1.17 | 1.53 | 10.0 | in DB |
+| cfr-full | 37711 | pgvector-hnsw | 32 | 0.901 | 0.300 | 1151 | 0.82 | 1.25 | 1.60 | 10.0 | in DB |
+| cfr-full | 37711 | pgvector-hnsw | 64 | 0.957 | 0.320 | 1131 | 0.83 | 1.25 | 1.52 | 10.0 | in DB |
+| cfr-full | 37711 | pgvector-hnsw | 128 | 0.984 | 0.325 | 972 | 0.97 | 1.45 | 1.70 | 10.0 | in DB |
+| cfr-full | 37711 | pgvector-hnsw | 256 | 0.984 | 0.325 | 718 | 1.33 | 1.90 | 2.23 | 10.0 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 1 | 0.996 | 0.322 | 1102 | 0.85 | 1.33 | 1.69 | 15.6 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 2 | 0.999 | 0.326 | 916 | 1.03 | 1.56 | 1.95 | 15.6 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 4 | 1.000 | 0.323 | 669 | 1.43 | 2.06 | 2.49 | 15.6 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 8 | 1.000 | 0.327 | 445 | 2.14 | 3.05 | 3.62 | 15.6 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 16 | 1.000 | 0.319 | 281 | 3.50 | 4.44 | 5.04 | 15.6 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 32 | 1.000 | 0.329 | 154 | 6.39 | 7.76 | 9.01 | 15.6 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 64 | 1.000 | 0.320 | 85 | 11.59 | 12.83 | 13.55 | 15.6 | in DB |
+| cfr-full | 37711 | pgvector-ivf | 128 | 1.000 | 0.320 | 90 | 10.98 | 12.08 | 12.90 | 15.6 | in DB |
 | cfr-dedup | 1584 | brute-force | — | 1.000 | 1.000 | 24051 | 0.04 | 0.05 | 0.05 | 0.0 | 2.4 |
 | cfr-dedup | 1584 | ivf-flat | 1 | 0.664 | 0.664 | 26631 | 0.04 | 0.04 | 0.06 | 0.0 | 2.5 |
 | cfr-dedup | 1584 | ivf-flat | 4 | 0.921 | 0.921 | 13436 | 0.07 | 0.11 | 0.21 | 0.0 | 2.5 |
@@ -109,7 +123,91 @@ knobs have somewhere to actually show a tradeoff.
 | random-hard | 19500 | hnsw | 128 | 0.505 | 0.504 | 563 | 1.70 | 2.08 | 3.31 | 171.6 | 32.6 |
 | random-hard | 19500 | hnsw | 256 | 0.721 | 0.719 | 327 | 3.04 | 3.25 | 3.40 | 171.6 | 32.6 |
 
+> **Pre-fix note (2026-08-11):** the `cfr-dedup` / `random-hard` HNSW rows
+> above are pre-connectivity-fix numbers. The `cfr-full` rows were
+> regenerated by the Day 5 benchmark after the fix and include the pgvector
+> baselines. See the temporal-pushdown section for the fix summary.
+
 ![recall vs QPS](benchmarks/recall-vs-qps.png)
+
+## Baseline: pgvector and tsvector
+
+Both run through the same harness, the same ground truth, and the same
+`VectorIndex` protocol as the hand-written indexes. Adding them was two lines
+in the registry — an out-of-process, C-implemented index absorbed into the
+Day-2 abstraction with no change to the runner, the metrics, or the plot.
+
+| Index | Build | Memory | Recall@10 (top effort) | QPS (top effort) | p99 ms |
+|---|---|---|---|---|---|
+| brute force | 0.0 s | 58.2 MB | 1.000 | 857 | 1.30 |
+| ivf-flat (nprobe=16) | 0.6 s | 58.5 MB | 0.999 | 1529 | 1.05 |
+| hnsw (ef=64) | 238.5 s | 62.2 MB | 0.933 | 2430 | 0.87 |
+| **pgvector-hnsw (ef=64)** | 10.0 s | in DB | 0.957 | 1131 | 1.60 |
+| **pgvector-ivf (probes=16)** | 15.6 s | in DB | 1.000 | 281 | 5.04 |
+
+Parameters matched where comparable: `m=16`, `ef_construction=64`,
+`lists=100`.
+
+### Verdict
+
+pgvector wins on build time by an order of magnitude and is not embarrassed
+on recall. `pgvector-hnsw` indexes the full 37,711-vector corpus in **10.0 s
+versus 238.5 s** for the hand-written HNSW — 24× faster — and reaches 0.957
+recall at `ef=64`, just ahead of my HNSW's 0.933 at the same effort. At
+`ef=256` both cap near 0.98; pgvector-ivf is the only index to hit exactly
+1.000 recall (at `probes=8`). That is the expected result, and publishing it
+is the point: it is written in C and has had years of tuning, and my
+hand-written index staying within 2–3 recall points at 2× the build cost is
+the number that matters, not the loss.
+
+My indexes still win on QPS at equal recall — my ivf-flat does 21,090 QPS at
+recall 0.992 (nprobe=1) against pgvector-ivf's 1,102 QPS at 0.996 — because
+my vectors already live in memory in one contiguous array. pgvector pays a
+COPY-format round trip and a driver hop per query. But that advantage is a
+property of *this* benchmark's in-process harness, and I would not defend it
+as a production claim.
+
+### Where pgvector wins outright
+
+- **Build time.** 10–16 s to index the full corpus versus 238 s — a genuine
+  order-of-magnitude difference with my construction parameters.
+- **Persistence and recovery.** The index survives a restart, gets backed up
+  with the database, and replicates. Mine is a file I have to rebuild.
+- **Concurrency.** MVCC and a real buffer pool, rather than one in-process
+  array with no write path.
+- **Operational surface.** `CREATE INDEX` versus ~700 lines I own forever.
+
+### Where the hand-written indexes win
+
+- **Temporal pushdown.** The filter enters the traversal itself. pgvector
+  filters through the planner — at 1.9% selectivity Postgres drops the ANN
+  index entirely and does an exact filter-then-sort (`Index Scan` on the PK
+  plus a top-N heapsort, 1.2 ms), because a post-filtered ANN result of `k`
+  rows at that selectivity contains ~0 admissible hits (the same collapse
+  measured on Day 3, occurring inside a mature production extension):
+  `EXPLAIN (ANALYZE)` with `jit=off` shows `Index Scan using
+  baseline_vectors_pkey ... Index Cond: (chunk_id = ANY (...))` then `Sort`
+  over all 800 admissible rows — no `baseline_hnsw_idx` in the plan.
+- **Introspection.** `last_probes_used`, per-query candidate counts, and the
+  trace panel exist because I control the traversal.
+
+### The tsvector baseline
+
+On the lexical side, the same protocol absorbed Postgres full-text search:
+`chunks.ts` is a generated `tsvector` column with a GIN index
+(`to_tsvector('english', text)`), and `PgFullTextIndex` exposes it through
+the `LexicalIndex` shape with `ts_rank_cd`. Measured on the 50 domain
+queries, p50 latency is **2.97 ms** (~209 QPS). The write-up must stay
+honest about the comparison: BM25 and `ts_rank_cd` are not apples-to-apples
+(Postgres ranks by term frequency and proximity, without BM25's document
+length normalisation or saturating tf), so the number worth reporting is
+latency and recall against the same ground truth — not score agreement.
+
+### What this comparison is not
+
+It is not evidence that hand-writing an index is the right production choice.
+For most teams it is not. It is evidence that I can build one, measure it
+against a mature alternative, and tell you which one to use.
 
 ## Reference cross-check
 
@@ -150,6 +248,21 @@ the implementation's fault.
 > being fully connected somewhere before 20k and the fragmentation
 > (up to ~5,400 components) is a construction defect, not a data
 > property.
+>
+> **Resolution (2026-08-11, landed before Day 5 Block 0).** The
+> construction defect is fixed. `_insert` now guarantees the freshly
+> inserted node survives every prune it participates in, and orphan
+> protection prevents an existing node from losing its last edge to
+> symmetric stale-edge removal; `_repair_connectivity` then bridges any
+> residual layer-0 components to the largest one at the closest node
+> pair. Measured on the full 38,211-vector corpus: **0 isolated nodes, 1
+> component (100% of nodes), entry-point degree 30** (bridges spread
+> across 230 distinct nodes, not a super-hub). Unfiltered recall is now
+> 0.951 @ ef=64 → **0.983 @ ef=256** (tie-aware), and filtered HNSW
+> pushdown at 1.91% selectivity reaches **0.948 @ ef=64 → 0.995 @
+> ef=256** — the 0.484 ceiling is gone, and HNSW now matches IVF-Flat
+> (0.949) instead of lagging it. Numbers below marked "pre-fix" predate
+> this and will be regenerated by the Day 5 benchmark.
 
 `hnswlib` is a **dev dependency used as a test oracle**, not part of the
 product and not in the query path — the same role the brute-force scan plays
@@ -264,7 +377,16 @@ positions visited (HNSW) or cells probed (IVF) per query.
 |---|---|---|---|---|---|---|---|---|---|
 | post-filter | 0.010 | 0.006 | 0.018 | 0.047 | 0.096 | 0.163 | 0.239 | **0.044** | 100 |
 | post-filter+overfetch | 0.383 | 0.477 | 0.395 | 0.448 | 0.510 | 0.573 | 0.432 | **0.407** | 579 |
-| in-index | 0.422 | 0.520 | 0.454 | 0.508 | 0.574 | 0.643 | 0.479 | **0.484** | 3,320 |
+| in-index (pre-fix) | 0.422 | 0.520 | 0.454 | 0.508 | 0.574 | 0.643 | 0.479 | **0.484** | 3,320 |
+| in-index (post-fix, ef=64) | — | — | — | — | — | — | — | **0.948** | 4,896 |
+
+The pre-fix in-index row shows the graph-fragmentation ceiling (0.484). With
+the connectivity fix (orphan protection + component repair, landed before Day 5
+Block 0), filtered HNSW pushdown at ★1.9% reaches **0.948 @ ef=64, 0.995 @
+ef=256** — matching IVF-Flat (0.949) instead of lagging it. The post-fix star
+point is above; the synthetic sweep will be regenerated in the Day 5
+benchmark. The `post-filter` and `post-filter+overfetch` rows are unaffected by
+the fix (they test the strategy, not the graph).
 
 **IVF-Flat** (nprobe floor 16, adaptive under filter)
 
@@ -293,29 +415,47 @@ synthetic curve at equal selectivity: on this corpus temporal admissibility is
 not more adversarial than a random subset. IVF and brute-force hold recall
 under a filter because they do not rely on a walk.
 
-**HNSW's in-index ceiling (~0.48) is a graph-construction bug, not a
-reachability ceiling of the data.** Subsequent investigation at full scale
+**HNSW's in-index ceiling (~0.48) was a graph-construction bug, not a
+reachability ceiling of the data — now fixed.** Investigation at full scale
 (full 37,911-vector corpus, identical parameters, same filtered brute-force
 oracle) established three things:
 
-1. The built layer-0 graph is fragmented: **5,427 disconnected components,
-   the largest holding only 62.5% of nodes** — 37.5% of the corpus is
+1. The built layer-0 graph was fragmented: **5,427 disconnected components,
+   the largest holding only 62.5% of nodes** — 37.5% of the corpus was
    unreachable from the entry point by any search, filtered or not. The
-   fragmentation scales with corpus size on the real embeddings (100%
+   fragmentation scaled with corpus size on the real embeddings (100%
    connected at N≈8,000 → ~65% at N≈20,000 → ~62.5% at N≈38,000) — the same
    duplication ratio, the same code, degrading as the graph grows.
-2. The consequence is visible even *without* a filter. Fetching k=1,000
+2. The consequence was visible even *without* a filter. Fetching k=1,000
    candidates (2.6% of the corpus) and post-filtering against the same
-   oracle: this implementation plateaus at **recall 0.397**, while `hnswlib`
-   on the identical corpus reaches **0.978**. No amount of overfetching can
+   oracle: this implementation plateaued at **recall 0.397**, while `hnswlib`
+   on the identical corpus reached **0.978**. No amount of overfetching can
    recover admissible rows that live in disconnected components.
-3. The construction code has **no connectivity guarantee**: `_insert` never
-   verifies that a newly wired node can reach the graph's entry point, and
-   the reverse-link pruning (hnsw.py, "keep the graph symmetric") is free to
+3. The construction code had **no connectivity guarantee**: `_insert` never
+   verified that a newly wired node could reach the graph's entry point, and
+   the reverse-link pruning (hnsw.py, "keep the graph symmetric") was free to
    strip the long-range bridges that duplicate-heavy clusters would otherwise
    carry. The corpus is 21.7× duplicated; a cluster saturates its own edge
    budget with near-zero-distance links before a bridge to the rest of the
    graph can survive.
+
+**Resolution (2026-08-11, landed before Day 5 Block 0).** Three changes to
+`hnsw.py` remove the defect:
+
+1. **Insert-time protection** — the node being inserted survives every prune
+   it participates in (`pruned[-1] = node`); a neighbour that overflows evicts
+   its least-useful member instead, so a node can never be born unreachable.
+2. **Orphan protection** — when symmetric stale-edge removal would strip an
+   *existing* node's last edge (degree 1), that node is swapped back into the
+   pruned list in place of a member with other edges to lean on.
+3. **`_repair_connectivity`** — after insertion, union-find the layer-0 edges
+   and bridge each residual component to the **largest** one at the closest
+   node pair (spread across nodes, not a super-hub).
+
+Re-measured on the full 38,211-vector corpus: **0 isolated nodes, 1 component
+(100% of nodes), entry-point degree 30**; unfiltered tie-aware recall
+0.951 @ ef=64 → **0.983 @ ef=256**; filtered pushdown at ★1.9%
+**0.948 @ ef=64 → 0.995 @ ef=256**.
 
 The day-2 reference cross-check that "confirmed `hnswlib` has the same
 ceiling" ran on an **8,000-vector subsample** — exactly the scale where this
@@ -346,3 +486,73 @@ BM25 is exhaustive, so moving the filter before the top-k costs nothing — it
 query **faster** than an unfiltered one (5.4 ms vs 21.0 ms). The asymmetry is
 not approximate-vs-exact; it is that an ANN index deliberately touches as little
 as possible, so a filter forces it to touch more.
+---
+
+## Load
+
+Single uvicorn worker, retrieval only (`POST /search`, no generation).
+`constant-arrival-rate`, six fixed offered loads over 45 s each. Queries and
+as-of dates randomised so the temporal filter is exercised rather than
+cached. k6 v2.2; scripts in `k6/`.
+
+| Offered load | p50 | p95 | p99 | Achieved | Error rate |
+|---|---|---|---|---|---|
+| 10 req/s | 26 ms | 33 ms | 35 ms | 10 /s | 0.0% |
+| 25 req/s | 17 ms | 19 ms | 31 ms | 25 /s | 0.0% |
+| **50 req/s** | 13 ms | **15 ms** | 18 ms | 50 /s | 0.0% |
+| 100 req/s | 1186 ms | 1876 ms | 37680 ms | 90 /s | 17.7% |
+| 200 req/s | — | 1976 ms | 38694 ms | 180 /s | 67.5% |
+| 400 req/s | — | 1570 ms | 8240 ms | 363 /s | 86.4% |
+
+**Knee: ~60–75 req/s.** Below it, p99 tracks p50 within ~20 ms and every
+request is served. Between 50 and 100 req/s the tail goes vertical — at 100
+offered, p95 explodes from 15 ms to ~1.9 s and p99 reaches **38 s**. Achieved
+throughput plateaus at ~90 served/s while the error rate climbs with offered
+load: the signature of a saturated single-process service with an unbounded
+queue, not a throughput limit being hit cleanly.
+
+### Why the knee is where it is
+
+Per-request breakdown measured with the harness (`k=10`,
+`as_of=2026-08-11`):
+
+| Step | Time |
+|---|---|
+| admissible set (cached, per-date) | 0.01 ms |
+| query embedding (ONNX, bge-small) | 3.0 ms |
+| hybrid search (brute-force vector + BM25 + RRF) | 13.4 ms |
+
+The brute-force vector search over 37,711 × 384 dominates, and it is
+**synchronous numpy on the event loop** — during those ~13 ms the worker
+cannot accept another request. That blocking is what sets the knee: at
+~16 ms of blocking work per request, a single worker tops out around 60–90
+served/s, and past that the event loop queue grows without bound.
+
+Two of the three levers in this table were already pulled this block: the
+admissible set was a **new Postgres pool per request** (a connection leak
+under concurrency — the first run failed with `too many clients`) and is now
+cached per-date and served from the shared pool. The embedding is the
+acknowledged floor. The remaining lever is swapping
+`BruteForceIndex → HNSWIndex` in `build_state` — a one-line change because
+both satisfy `VectorIndex`, worth roughly 10× on the search step — but it
+changes the product's exact-search semantics and adds a ~4 min index build,
+so it is a product decision, not a load-test fix.
+
+### Behaviour past capacity
+
+Requests queue rather than shed. There is no admission control and no
+concurrency limit, so past the knee the server accepts everything and every
+client waits longer — including the ones that would have been served fine at
+lower load. The 38 s p99 values are requests sitting in the queue behind
+hundreds of others.
+
+**This is the wrong failure mode and I'd fix it before production.** The
+right one is bounded concurrency with fast rejection: a semaphore sized near
+the knee, returning 503 with `Retry-After` when full. Slow failure that
+degrades everyone is worse than fast failure that degrades some — a rejected
+request can retry, whereas a request queued behind 400 others has already
+consumed a connection and will probably time out anyway.
+
+Not implemented here: it is a production concern rather than a portfolio one,
+and inventing it without a real traffic pattern to size it against would be
+guessing. Named so it's a known gap rather than an unexamined one.

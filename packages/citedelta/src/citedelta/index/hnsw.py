@@ -66,6 +66,11 @@ class HNSWIndex:
         self._entry: int | None = None
         self._max_level: int = 0
 
+        # Wiring guarantee: a node that lost every reverse edge during
+        # insertion is connected to the graph's entry point instead of being
+        # left unreachable. See _insert and _repair_connectivity.
+        self._bailout_edges = 0
+
     # ------------------------------------------------------------- properties
 
     @property
@@ -224,6 +229,8 @@ class HNSWIndex:
             if (i + 1) % 5000 == 0:
                 log.info("hnsw.progress", inserted=i + 1, total=n, max_level=self._max_level)
 
+        self._repair_connectivity()
+
         log.info(
             "hnsw.built",
             n=n,
@@ -231,6 +238,86 @@ class HNSWIndex:
             m=self._m,
             ef_construction=self._ef_construction,
         )
+
+    def _repair_connectivity(self) -> None:
+        """Bridge every layer-0 component to the largest one.
+
+        Orphan protection in _insert keeps every node at degree >= 1, but
+        eviction can still split the layer-0 graph into several components:
+        a node's surviving edges may all point at nodes that were themselves
+        cut off, isolating a whole region from the entry point. A search
+        starting at the entry can then never reach that region, which caps
+        recall at the largest component's share of nodes.
+
+        Deterministic repair: union-find the layer-0 edges, then bridge each
+        other component to the largest one at the closest node pair. Bridging
+        to the LARGEST component (rather than to the entry point) spreads the
+        extra edges across distinct nodes instead of turning one node into a
+        super-hub that every search must expand.
+        """
+        n = self.size
+        adj = self._graph[0]
+        if n <= 1 or self._entry is None:
+            return
+
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for node, neighbours in adj.items():
+            for nb in neighbours:
+                union(node, nb)
+
+        members_of: dict[int, list[int]] = {}
+        for node in range(n):
+            members_of.setdefault(find(node), []).append(node)
+        largest_root = max(members_of, key=lambda root: len(members_of[root]))
+        largest = np.asarray(members_of[largest_root], dtype=np.int64)
+        if len(members_of) == 1:
+            return
+
+        # Closest pair between each small component and the largest one, in one
+        # chunked matmul. argmin over the members of a component gives both the
+        # member to bridge and its nearest node in the largest component.
+        for root, members_list in members_of.items():
+            if root == largest_root:
+                continue
+            members_arr = np.asarray(members_list, dtype=np.int64)
+            best_member: int | None = None
+            best_peer: int | None = None
+            best_dist = math.inf
+            for start in range(0, len(members_arr), 512):
+                chunk = members_arr[start : start + 512]
+                dists = 1.0 - (self._vectors[chunk] @ self._vectors[largest].T)
+                flat = np.argmin(dists, axis=1)
+                row_dists = dists[np.arange(chunk.shape[0]), flat]
+                row = int(np.argmin(row_dists))
+                d = float(row_dists[row])
+                if d < best_dist:
+                    best_dist = d
+                    best_member = int(chunk[row])
+                    best_peer = int(largest[int(flat[row])])
+            if best_member is None or best_peer is None:
+                continue
+            adj.setdefault(best_member, []).append(best_peer)
+            adj.setdefault(best_peer, []).append(best_member)
+            self._bailout_edges += 1
+
+        if self._bailout_edges:
+            log.info(
+                "hnsw.repaired",
+                components=len(members_of),
+                bridges=self._bailout_edges,
+            )
 
     def _insert(self, node: int) -> None:
         level = int(self._levels[node])
@@ -274,16 +361,47 @@ class HNSWIndex:
                     scored = [
                         (float(1.0 - base @ self._vectors[other]), other) for other in adjacency
                     ]
-                    pruned = set(self._select_neighbours(base, scored, budget))
+                    pruned = list(self._select_neighbours(base, scored, budget))
+                    # The node being inserted must survive this prune. If every
+                    # neighbour evicts it, the stale-edge removal below strips
+                    # ALL of its forward edges and it is born unreachable — the
+                    # fragmentation mechanism measured at scale. Evict the least
+                    # useful member instead.
+                    if node not in pruned:
+                        pruned[-1] = node
+                    pruned_set = set(pruned)
+
+                    # Orphan protection: an EXISTING node may also lose its last
+                    # edge here — `neighbour` can be its only remaining one, and
+                    # the symmetric stale-edge removal below would then strip it
+                    # to degree 0, unreachable from every search. When that is
+                    # the case, swap it into the pruned list in place of the
+                    # least useful member that has another edge to lean on.
+                    for other in adjacency:
+                        if other in pruned_set:
+                            continue
+                        other_adj = self._graph[layer].get(other)
+                        if other_adj and neighbour in other_adj and len(other_adj) == 1:
+                            for idx in range(len(pruned) - 1, -1, -1):
+                                cand = pruned[idx]
+                                if cand == node:
+                                    continue
+                                cand_adj = self._graph[layer].get(cand)
+                                if cand_adj is not None and len(cand_adj) > 1:
+                                    pruned[idx] = other
+                                    pruned_set.discard(cand)
+                                    pruned_set.add(other)
+                                    break
+
                     # Keep the graph SYMMETRIC: any member that was just pruned
                     # out of `neighbour`'s list still points to it, so drop
                     # those stale forward edges too — every edge is reverse-able.
                     for other in adjacency:
-                        if other not in pruned:
+                        if other not in pruned_set:
                             stale = self._graph[layer].get(other)
                             if stale and neighbour in stale:
                                 stale.remove(neighbour)
-                    self._graph[layer][neighbour] = list(pruned)
+                    self._graph[layer][neighbour] = pruned
 
             entry_points = [node_id for _, node_id in candidates]
 

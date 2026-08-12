@@ -12,7 +12,13 @@ import matplotlib
 matplotlib.use("Agg")  # no display on a VPS; must precede pyplot
 import matplotlib.pyplot as plt
 
-MARKERS = {"brute-force": "*", "ivf-flat": "o", "hnsw": "s"}
+MARKERS = {
+    "brute-force": "*",
+    "ivf-flat": "o",
+    "hnsw": "s",
+    "pgvector-hnsw": "^",
+    "pgvector-ivf": "v",
+}
 
 
 def plot_results(result_files: list[Path], out: Path, *, title: str = "") -> None:
@@ -29,7 +35,13 @@ def plot_results(result_files: list[Path], out: Path, *, title: str = "") -> Non
         lambda: defaultdict(list)
     )
     for path in result_files:
-        for row in json.loads(path.read_text()):
+        try:
+            payload = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        for row in payload if isinstance(payload, list) else []:
+            if "dataset" not in row or "index" not in row:
+                continue
             datasets[row["dataset"]][row["index"]].append((row["recall"], row["qps"]))
 
     n = len(datasets)

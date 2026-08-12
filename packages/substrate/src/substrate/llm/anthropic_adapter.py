@@ -78,6 +78,13 @@ class AnthropicCompletions:
                     )
                     await asyncio.sleep(delay)
                 continue
+            except anthropic.APIError as exc:
+                # Non-retryable provider failure (auth, invalid request, ...).
+                # Still a provider outage, not a refusal and not a code bug:
+                # surface it as CompletionError so the API layer renders 502.
+                raise CompletionError(
+                    f"{type(exc).__name__} for model {request.model}: {exc}"
+                ) from exc
             return self._to_response(raw, run_id=request.run_id, when=self._today())
 
         raise CompletionError(

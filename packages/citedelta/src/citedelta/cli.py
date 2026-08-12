@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from typing import Any
 
 import typer
 
@@ -221,6 +222,39 @@ def vector_search(
 
 bench_app = typer.Typer(help="Benchmarks.")
 app.add_typer(bench_app, name="bench")
+
+eval_app = typer.Typer(help="Evaluation suite.")
+app.add_typer(eval_app, name="eval")
+
+
+@eval_app.command("run")
+def eval_run(
+    out: str = typer.Option("data/eval/scorecard.json", "--out"),
+) -> None:
+    """Run the 60-case evaluation suite."""
+    import json
+    from pathlib import Path
+
+    from citedelta.api.state import build_state, close_state
+    from citedelta.eval.run import run_eval
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+
+    async def main() -> dict[str, Any]:
+        state = await build_state(settings)
+        try:
+            return await run_eval(state)
+        finally:
+            await close_state(state)
+
+    report = asyncio.run(main())
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2) + "\n")
+    typer.echo(json.dumps(report["overall"], indent=2))
+    for cls, r in report["by_class"].items():
+        typer.echo(f"  {cls:12} n={r['n']:2}  recall@5={r['recall_at_5']:.2f}")
 
 
 @bench_app.command("run")

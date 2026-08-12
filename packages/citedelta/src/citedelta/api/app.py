@@ -28,6 +28,7 @@ from citedelta.web.copy import REFUSAL_HELP, REFUSAL_LABELS
 from citedelta.web.diff import diff_pair
 from citedelta.web.filters import citation_chips
 from citedelta.web.ribbon import build_ribbon
+from substrate.llm import CompletionError
 from substrate.obs import new_run_id
 
 log = structlog.get_logger(__name__)
@@ -68,6 +69,18 @@ class AskResponse(BaseModel):
     cost_usd: str
 
 
+class SearchHit(BaseModel):
+    chunk_id: int
+    score: float
+    ranks: dict[str, int]
+
+
+class SearchResponse(BaseModel):
+    as_of: str
+    selectivity: float
+    hits: list[SearchHit]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -97,6 +110,34 @@ async def healthz(request: Request) -> dict[str, Any]:
 @router.get("/metrics")
 async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search(body: AskRequest, request: Request) -> SearchResponse:
+    """Retrieval only — no generation. This is the path with a latency SLO.
+
+    Separate from /ask rather than a flag on it, because the two have
+    genuinely different performance characteristics and different targets.
+    A single endpoint whose p95 depends on a boolean is an endpoint whose
+    dashboard means nothing.
+    """
+    state = ctx(request)
+    as_of = body.as_of or datetime.now(UTC).date()
+    admissible = await load_admissible(as_of, state.corpus_size, db=state.db)
+    query_vector = state.embeddings.embed([body.query])[0]
+    trace = hybrid_search(
+        body.query,
+        query_vector,
+        lexical=state.lexical,
+        vector=state.vector,
+        admissible=admissible,
+        k=body.k,
+    )
+    return SearchResponse(
+        as_of=as_of.isoformat(),
+        selectivity=trace.selectivity,
+        hits=[SearchHit(chunk_id=h.chunk_id, score=h.score, ranks=h.ranks) for h in trace.hits],
+    )
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -141,7 +182,7 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
     as_of = body.as_of or datetime.now(UTC).date()
 
     with LATENCY.time():
-        admissible = await load_admissible(as_of, state.corpus_size)
+        admissible = await load_admissible(as_of, state.corpus_size, db=state.db)
         # The internal label is "valid_on=YYYY-MM-DD" (benchmark-facing). The
         # product-facing label is the date itself, so the banner, the prompt,
         # and the refusal detail read naturally rather than leaking the model.
@@ -353,4 +394,18 @@ def create_app() -> FastAPI:
     app = FastAPI(title="CiteDelta", lifespan=lifespan)
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
+
+    @app.exception_handler(CompletionError)
+    async def completion_error_handler(request: Request, exc: CompletionError) -> Response:
+        # An LLM outage is NOT a refusal and NOT a code bug. Rendering it as
+        # either would let the refusal rate absorb the incident and keep the
+        # uptime graph green through an outage. A distinct 502 keeps the two
+        # failure modes separable.
+        log.error("api.provider_unavailable", error=str(exc))
+        return Response(
+            status_code=502,
+            media_type="application/json",
+            content='{"detail": "model provider unavailable"}',
+        )
+
     return app

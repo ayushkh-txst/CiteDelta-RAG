@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from typing import Any
 
 import numpy as np
 import structlog
@@ -30,6 +31,34 @@ log = structlog.get_logger(__name__)
 # Multipliers on k. At k=10 this sweeps 10 -> 5,000 candidates fetched.
 OVERFETCH_LEVELS = (1, 2, 5, 10, 25, 50, 100, 250, 500)
 
+# The admissible id set depends ONLY on the date. Dates repeat heavily in
+# real traffic, and rebuilding the set on every request means a Postgres
+# round-trip per request that a dict lookup could have served.
+_ADMISSIBLE_IDS_CACHE: dict[date, frozenset[int]] = {}
+
+
+async def _fetch_admissible_ids(as_of: date, conn: Any) -> set[int]:
+    document_id = await conn.fetchval(
+        "SELECT id FROM documents WHERE external_id = $1", EXTERNAL_ID
+    )
+    point = AsOf(valid_on=as_of)
+    return await CorpusStore(conn).admissible_chunk_ids(int(document_id), point)
+
+
+async def load_admissible(
+    as_of: date, corpus_size: int, *, db: Database | None = None
+) -> AdmissibleSet:
+    ids = _ADMISSIBLE_IDS_CACHE.get(as_of)
+    if ids is None:
+        if db is not None:
+            async with db.acquire() as conn:
+                ids = frozenset(await _fetch_admissible_ids(as_of, conn))
+        else:
+            async with Database.open(get_settings().database_url) as pool, pool.acquire() as conn:
+                ids = frozenset(await _fetch_admissible_ids(as_of, conn))
+        _ADMISSIBLE_IDS_CACHE[as_of] = ids
+    return AdmissibleSet.from_as_of(set(ids), AsOf(valid_on=as_of), corpus_size)
+
 
 @dataclass
 class CollapseResult:
@@ -47,17 +76,6 @@ class CollapseResult:
     @property
     def naive_recall(self) -> float:
         return self.recall_by_overfetch.get(1, 0.0)
-
-
-async def load_admissible(as_of: date, corpus_size: int) -> AdmissibleSet:
-    settings = get_settings()
-    async with Database.open(settings.database_url) as db, db.acquire() as conn:
-        document_id = await conn.fetchval(
-            "SELECT id FROM documents WHERE external_id = $1", EXTERNAL_ID
-        )
-        point = AsOf(valid_on=as_of)
-        ids = await CorpusStore(conn).admissible_chunk_ids(int(document_id), point)
-    return AdmissibleSet.from_as_of(ids, point, corpus_size)
 
 
 def held_out_split(
