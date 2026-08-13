@@ -127,7 +127,7 @@ and both sit inside a `prefers-reduced-motion` guard.
   doesn't have.
 - **No bubbles, avatars, or assistant persona.** A centered column of bubbles
   is the most templated UI in existence, and "another RAG chatbot" is a
-  liability for a portfolio about retrieval infrastructure. The conversation
+  liability when the point is retrieval infrastructure. The conversation
   survives; chat convention does not.
 - **No skeleton loaders.** The wait is real and valuable; the phases turn it
   into the demo instead of faking content with shimmer.

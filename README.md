@@ -4,7 +4,7 @@ Bitemporal hybrid search over US immigration regulations. Ask a question, get an
 answer with citations you can verify — **as the regulation stood on any date
 since 2016**.
 
-![Same question, two dates](docs/images/diff.png)
+![The conversation, with the temporal gutter and the rupture](docs/images/conversation.png)
 
 Every index, the queue, the fusion, and the temporal filtering are hand-written.
 No vector database, no LangChain, no ORM.
