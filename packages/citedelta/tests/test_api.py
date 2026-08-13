@@ -80,6 +80,48 @@ async def test_uncited_candidates_survive_into_the_trace(clean_db: Database) -> 
 
 
 @pytest.mark.asyncio
+async def test_query_column_stores_what_the_user_said_not_what_was_searched(
+    clean_db: Database,
+) -> None:
+    """A follow-up's row must keep the raw text in `query` and the resolved
+    text in `resolved_query` — the trace is the only record of what the system
+    understood, so it cannot collapse the two."""
+    from citedelta.answer.models import Answer
+
+    trace = RetrievalTrace(
+        query="grace period after F-1 completion",
+        as_of="2019-06-15",
+        selectivity=0.02,
+        fused=1,
+        hits=[],
+    )
+    answer = Answer(
+        query="grace period after F-1 completion",
+        as_of="2019-06-15",
+        text="Sixty days [1].",
+        citations=(_citation(1, 1),),
+        trace=trace,
+        cost_usd=Decimal(0),
+        latency_ms=1.0,
+    )
+    trace_id = await persist(
+        clean_db,
+        result=answer,
+        candidates=[_citation(1, 1)],
+        as_of=date(2019, 6, 15),
+        run_id="r1",
+        query="What about in 2019?",
+        resolved_query="grace period after F-1 completion",
+    )
+    async with clean_db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT query, resolved_query FROM query_traces WHERE id = $1", trace_id
+        )
+    assert row["query"] == "What about in 2019?"
+    assert row["resolved_query"] == "grace period after F-1 completion"
+
+
+@pytest.mark.asyncio
 async def test_a_row_cannot_be_both_answer_and_refusal(clean_db: Database) -> None:
     """The XOR constraint, asserted. If this ever passes, the invariant has
     quietly been dropped from the schema."""

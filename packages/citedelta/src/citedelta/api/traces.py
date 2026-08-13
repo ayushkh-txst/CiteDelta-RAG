@@ -87,9 +87,15 @@ async def persist(
     run_id: str,
     conversation_id: UUID | None = None,
     turn_index: int | None = None,
+    query: str | None = None,
     resolved_query: str | None = None,
 ) -> int:
     trace = result.trace
+
+    # `result.query` is the text retrieval ran on — the RESOLVED question for
+    # a follow-up. The row's `query` column must stay what the user actually
+    # said, or every follow-up trace becomes a lie about the conversation.
+    raw_query = query or result.query
 
     # Every row belongs to a conversation. Defaults keep callers that have no
     # thread (the JSON path, the eval) working unchanged while satisfying the
@@ -121,7 +127,7 @@ async def persist(
             RETURNING id
             """,
             run_id,
-            result.query,
+            raw_query,
             as_of,
             trace.selectivity if trace else 0.0,
             trace.candidates_lexical if trace else 0,

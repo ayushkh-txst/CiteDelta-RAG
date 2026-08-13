@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -21,8 +22,9 @@ from starlette.responses import Response
 
 from citedelta.answer.intent import Intent, classify
 from citedelta.answer.models import Answer, Citation, Refusal, RefusalReason
+from citedelta.answer.resolve import resolve_followup
 from citedelta.api.state import AppState, build_state, close_state
-from citedelta.api.traces import next_turn_index, persist
+from citedelta.api.traces import load_thread, next_turn_index, persist
 from citedelta.bench.temporal import load_admissible
 from citedelta.config import get_settings
 from citedelta.retrieve import RetrievalTrace, hybrid_search
@@ -188,7 +190,7 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
 async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
     """The one code path behind both /ask and /ui/ask."""
     run_id = new_run_id()
-    as_of = body.as_of or datetime.now(UTC).date()
+    requested_as_of = body.as_of or datetime.now(UTC).date()
 
     conversation_id = body.conversation_id or uuid4()
     turn_index = await next_turn_index(state.db, conversation_id)
@@ -200,7 +202,7 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
     if classify(body.query) is Intent.GREETING:
         greeting = Refusal(
             query=body.query,
-            as_of=as_of.isoformat(),
+            as_of=requested_as_of.isoformat(),
             reason=RefusalReason.GREETING,
             detail=GREETING_REPLY,
             trace=None,
@@ -211,7 +213,7 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
             state.db,
             result=greeting,
             candidates=[],
-            as_of=as_of,
+            as_of=requested_as_of,
             run_id=run_id,
             conversation_id=conversation_id,
             turn_index=turn_index,
@@ -223,6 +225,19 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
             "selectivity": 0.0,
         }
 
+    history = await load_thread(state.db, conversation_id)
+    resolution = await resolve_followup(
+        state.resolver_llm,
+        question=body.query,
+        history=history,
+        current_as_of=requested_as_of,
+        corpus_since=state.corpus_since,
+        today=datetime.now(UTC).date(),
+        run_id=run_id,
+    )
+    as_of = resolution.as_of or requested_as_of
+    search_text = resolution.standalone_question
+
     with LATENCY.time():
         admissible = await load_admissible(as_of, state.corpus_size, db=state.db)
         # The internal label is "valid_on=YYYY-MM-DD" (benchmark-facing). The
@@ -233,9 +248,9 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
             label=as_of.isoformat(),
             corpus_size=admissible.corpus_size,
         )
-        query_vector = state.embeddings.embed([body.query])[0]
+        query_vector = state.embeddings.embed([search_text])[0]
         trace = hybrid_search(
-            body.query,
+            search_text,
             query_vector,
             lexical=state.lexical,
             vector=state.vector,
@@ -250,6 +265,10 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
             run_id=run_id,
             k=body.k,
         )
+        # The resolver and the answer share a run_id in one ledger; the row's
+        # cost is the turn's true cost across both calls, not just the answer.
+        if state.ledger.total(run_id) != result.cost_usd:
+            result = replace(result, cost_usd=state.ledger.total(run_id))
         trace_id = await persist(
             state.db,
             result=result,
@@ -258,7 +277,8 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
             run_id=run_id,
             conversation_id=conversation_id,
             turn_index=turn_index,
-            resolved_query=body.query,
+            query=body.query,
+            resolved_query=search_text,
         )
 
     ASKS.labels(outcome="refused" if result.refused else "answered").inc()

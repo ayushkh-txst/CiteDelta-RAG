@@ -56,5 +56,12 @@ def reciprocal_rank_fusion(
     fused = [
         FusedHit(chunk_id=cid, score=score, ranks=dict(ranks[cid])) for cid, score in scores.items()
     ]
-    fused.sort(key=lambda hit: (-hit.score, hit.chunk_id))
+    # Scores are sums of reciprocals, and float addition is not associative:
+    # two sums that are mathematically equal can differ in the last ulp
+    # depending on the order the lists arrived. Sorting on the raw score would
+    # then let summation order decide a tie, silently breaking the
+    # order-invariance guarantee. Rounding to 12 decimals is safe because no
+    # two DISTINCT reciprocal sums are ever that close — adjacent ranks differ
+    # by ~1e-4.
+    fused.sort(key=lambda hit: (-round(hit.score, 12), hit.chunk_id))
     return fused[:limit] if limit is not None else fused

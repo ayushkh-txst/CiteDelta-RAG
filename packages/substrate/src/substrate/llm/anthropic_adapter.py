@@ -85,7 +85,9 @@ class AnthropicCompletions:
                 raise CompletionError(
                     f"{type(exc).__name__} for model {request.model}: {exc}"
                 ) from exc
-            return self._to_response(raw, run_id=request.run_id, when=self._today())
+            return self._to_response(
+                raw, run_id=request.run_id, when=self._today(), model=request.model
+            )
 
         raise CompletionError(
             f"{self._max_attempts} attempts failed for model {request.model}"
@@ -115,7 +117,7 @@ class AnthropicCompletions:
             }
         return kwargs
 
-    def _to_response(self, raw: Any, *, run_id: str, when: date) -> CompletionResponse:
+    def _to_response(self, raw: Any, *, run_id: str, when: date, model: str) -> CompletionResponse:
         stop = _STOP_REASONS.get(raw.stop_reason or "", StopReason.OTHER)
 
         # Check the stop reason BEFORE touching content. On a refusal the
@@ -131,7 +133,11 @@ class AnthropicCompletions:
             cache_write_tokens=getattr(raw.usage, "cache_creation_input_tokens", 0) or 0,
             cache_read_tokens=getattr(raw.usage, "cache_read_input_tokens", 0) or 0,
         )
-        cost = price(usage, model=raw.model, when=when)
+        # Price by the model we ASKED for, not the string the provider echoes
+        # back — asking for `claude-haiku-4-5` returns the dated alias
+        # `claude-haiku-4-5-20251001`, and the rate table is keyed by the
+        # aliases we send. Billing is determined by the request, not the echo.
+        cost = price(usage, model=model, when=when)
         running = self._ledger.record(run_id, cost)
 
         category = None

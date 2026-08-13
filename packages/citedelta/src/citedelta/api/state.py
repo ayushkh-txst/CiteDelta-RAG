@@ -15,7 +15,9 @@ from citedelta.index.build import LEXICAL_INDEX_FILENAME
 from citedelta.index.lexical import LexicalIndex
 from citedelta.index.vector import VectorIndex
 from substrate.db import Database
+from substrate.llm import Completions
 from substrate.llm.anthropic_adapter import AnthropicCompletions
+from substrate.llm.pricing import CostLedger
 
 log = structlog.get_logger(__name__)
 
@@ -27,6 +29,8 @@ class AppState:
     vector: VectorIndex
     embeddings: LocalEmbeddings
     answers: AnswerService
+    resolver_llm: Completions
+    ledger: CostLedger
     corpus_size: int
     corpus_since: date
     """Earliest date the corpus can answer from. Dates before this always
@@ -75,7 +79,12 @@ async def build_state(settings: Settings) -> AppState:
     # Warm the ONNX session so the first real request doesn't pay for it.
     embeddings.embed(["warmup"])
 
-    llm = AnthropicCompletions(api_key=settings.anthropic_api_key)
+    # One ledger across both models, so a turn's reported cost is the turn's
+    # actual cost: resolver + answer land under the same run_id and the total
+    # is what gets persisted.
+    ledger = CostLedger()
+    llm = AnthropicCompletions(api_key=settings.anthropic_api_key, ledger=ledger)
+    resolver_llm = AnthropicCompletions(api_key=settings.anthropic_api_key, ledger=ledger)
     answers = AnswerService(llm, model=settings.llm_model, max_tokens=settings.llm_max_tokens)
 
     return AppState(
@@ -84,6 +93,8 @@ async def build_state(settings: Settings) -> AppState:
         vector=vector,
         embeddings=embeddings,
         answers=answers,
+        resolver_llm=resolver_llm,
+        ledger=ledger,
         corpus_size=len(ids),
         corpus_since=corpus_since,
         snapshot_count=snapshot_count,
