@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from decimal import Decimal
 
 import structlog
@@ -19,7 +20,7 @@ from citedelta.answer.models import (
 )
 from citedelta.answer.prompt import RESPONSE_SCHEMA, SYSTEM_PROMPT, build_user_message
 from citedelta.answer.rerank import PassthroughReranker, Reranker
-from citedelta.answer.validator import validate_citations
+from citedelta.answer.validator import CitedRef, validate_citations
 from citedelta.retrieve import RetrievalTrace
 from citedelta.temporal import AdmissibleSet
 from citedelta.web.copy import GREETING_REPLY
@@ -131,14 +132,26 @@ class AnswerService:
 
         try:
             payload = json.loads(response.text)
+            out_of_scope = bool(payload["out_of_scope"])
             sufficient = bool(payload["sufficient"])
             text = str(payload["answer"])
-            cited_ids = [int(i) for i in payload["citation_ids"]]
+            refs = [
+                CitedRef(chunk_id=int(c["id"]), quote=str(c["quote"])) for c in payload["citations"]
+            ]
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             log.warning("answer.malformed", error=str(exc))
             return refuse(
                 RefusalReason.MALFORMED_RESPONSE,
                 "The model's response could not be read.",
+            )
+
+        # Scope before sufficiency. "Not about immigration at all" and "about
+        # immigration but not covered here" want different copy, and checking
+        # sufficiency first would collapse them into one message.
+        if out_of_scope:
+            return refuse(
+                RefusalReason.OUT_OF_SCOPE,
+                "That question is outside the regulation I cover.",
             )
 
         if not sufficient or not text.strip():
@@ -147,17 +160,14 @@ class AnswerService:
                 (f"The provisions in force on {trace.as_of} do not cover this question."),
             )
 
-        result = validate_citations(
-            cited_ids,
-            retrieved_ids={c.chunk_id for c in shown},
-            admissible=admissible,
-        )
+        by_id = {c.chunk_id: c for c in shown}
+        result = validate_citations(refs, retrieved=by_id, admissible=admissible)
         if not result.ok:
             # Note what is NOT logged: the answer text. It is discarded here
             # and must not leak into a log that someone later treats as a
             # record of what the system said.
             log.error(
-                "answer.fabricated_citation",
+                "answer.validation_failed",
                 query=trace.query[:80],
                 failures=[f"{f.chunk_id}:{f.check}" for f in result.failures],
             )
@@ -169,8 +179,9 @@ class AnswerService:
                 ),
             )
 
-        by_id = {c.chunk_id: c for c in shown}
-        citations = tuple(by_id[i] for i in result.cited)
+        # Attach each verified quote to its Citation for the UI to bold.
+        quotes = {r.chunk_id: r.quote for r in refs}
+        citations = tuple(replace(by_id[i], quote=quotes.get(i, "")) for i in result.cited)
 
         log.info(
             "answer.ok",

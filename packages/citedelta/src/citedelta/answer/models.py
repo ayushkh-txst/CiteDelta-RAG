@@ -76,6 +76,11 @@ class Citation:
     means BM25 never returned this at all — which is exactly the kind of thing
     the trace panel exists to show."""
 
+    quote: str = ""
+    """The verbatim span the answer relied on, verified to appear in `text`.
+    Defaults empty so every existing construction site still works — the
+    benchmark harness and the eval build Citations without quotes."""
+
     @property
     def in_force_label(self) -> str:
         end = self.effective_to or "present"

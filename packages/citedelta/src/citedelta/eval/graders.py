@@ -1,4 +1,4 @@
-"""Deterministic graders. No LLM judges — see the block README for why."""
+"""Deterministic graders. No LLM judges — see the eval README for why."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from citedelta.answer.models import AnswerResult, Citation
+from citedelta.answer.validator import normalize
 from citedelta.eval.cases import EvalCase
 
 
@@ -45,6 +46,28 @@ def _matches(path: str, expected: str) -> bool:
     return p.startswith(e) or e.startswith(p)
 
 
+def _citations_hold(case: EvalCase, result: AnswerResult, candidates: list[Citation]) -> bool:
+    """Re-verify the guarantee from the outside.
+
+    Deliberately a separate implementation from answer/validator.py. The
+    eval's job is to check the promise, not to ask the promise-keeper whether
+    it kept the promise — sharing the code would let one bug pass both.
+    """
+    if result.refused:
+        return True  # nothing was asserted, so nothing can be unsupported
+
+    shown = {c.chunk_id: c for c in candidates}
+    for cited in result.citations:
+        source = shown.get(cited.chunk_id)
+        if source is None:
+            return False
+        if not cited.quote.strip():
+            return False
+        if normalize(cited.quote) not in normalize(source.text):
+            return False
+    return True
+
+
 def grade(case: EvalCase, result: AnswerResult, candidates: list[Citation]) -> CaseScore:
     top5 = candidates[:5]
 
@@ -69,7 +92,7 @@ def grade(case: EvalCase, result: AnswerResult, candidates: list[Citation]) -> C
         case_id=case.id,
         cls=case.cls.value,
         retrieved=retrieved,
-        citations_valid=result.refused or bool(cited),
+        citations_valid=_citations_hold(case, result, candidates),
         refusal_correct=result.refused == case.expects_refusal,
         reason_correct=(
             case.expected_reason is None

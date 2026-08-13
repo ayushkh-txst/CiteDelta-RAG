@@ -7,9 +7,33 @@ claim. Everything else is retrieval quality; this is the guarantee.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
+from citedelta.answer.models import Citation
 from citedelta.temporal import AdmissibleSet
+
+
+@dataclass(frozen=True, slots=True)
+class CitedRef:
+    """What the model claims: an id and the words it says are there."""
+
+    chunk_id: int
+    quote: str
+
+
+def normalize(text: str) -> str:
+    """Collapse all whitespace to single spaces.
+
+    Regulation text arrives with line breaks and runs of spaces from the XML;
+    a model copying a span faithfully will reflow it. Whitespace is the one
+    difference that is never semantic, so it is the one we forgive.
+
+    Case is NOT normalized. "Student" and "student" are a real difference in
+    a legal quotation, and forgiving case is the first step down a slope that
+    ends with forgiving paraphrase — at which point the check means nothing.
+    """
+    return " ".join(text.split())
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,66 +54,75 @@ class ValidationResult:
 
 
 def validate_citations(
-    citation_ids: list[int],
+    refs: list[CitedRef],
     *,
-    retrieved_ids: set[int],
+    retrieved: Mapping[int, Citation],
     admissible: AdmissibleSet,
     corpus_ids: set[int] | None = None,
 ) -> ValidationResult:
-    """Three independent checks per cited id.
+    """Four independent checks per cited id.
 
-    They are not equally likely to fire, and that is the point — each one
-    catches a different party's mistake:
+      exists      -> the MODEL invented an id out of nothing
+      retrieved   -> the MODEL cited something real it was never shown
+      admissible  -> WE have a bug; retrieval already filtered by as_of, so
+                     this re-asserts the product's headline invariant at the
+                     boundary where it becomes a user-visible promise
+      quote       -> the MODEL paraphrased while claiming to quote
 
-      exists      -> catches the MODEL inventing an id out of nothing.
-      retrieved   -> catches the MODEL citing something real that it was
-                     never shown. (Also implies `exists`, given a sane
-                     retriever — kept separate so the failure message says
-                     which thing went wrong.)
-      admissible  -> catches US. Retrieval already filtered by as_of, so a
-                     retrieved id is admissible BY CONSTRUCTION. This check
-                     re-asserts that invariant at the boundary where it
-                     becomes a user-visible promise, independently of the
-                     code that was supposed to enforce it.
-
-    That last one deserves defending, because "it can never fire" is usually
-    an argument for deleting a check. It stays because the invariant it
-    guards is the product's headline claim, the assertion costs a set
-    lookup, and if it ever DOES fire it means the temporal filter has a bug
-    that would otherwise reach a user as a confidently wrong answer about
-    what the law said. That is precisely the class of failure worth paying a
-    redundant check for.
+    `quote` is the new one and it is the strongest of the four, because it is
+    the only check on the RELATIONSHIP between the answer and the source. The
+    other three prove a citation points somewhere legitimate; this one proves
+    the words the answer leans on are actually there.
     """
     failures: list[ValidationFailure] = []
     seen: list[int] = []
 
-    for chunk_id in citation_ids:
-        if chunk_id in seen:
+    for ref in refs:
+        if ref.chunk_id in seen:
             continue
-        seen.append(chunk_id)
+        seen.append(ref.chunk_id)
 
-        if corpus_ids is not None and chunk_id not in corpus_ids:
-            failures.append(
-                ValidationFailure(chunk_id, "exists", f"chunk {chunk_id} is not in the corpus")
-            )
-            continue
-
-        if chunk_id not in retrieved_ids:
+        if corpus_ids is not None and ref.chunk_id not in corpus_ids:
             failures.append(
                 ValidationFailure(
-                    chunk_id,
-                    "retrieved",
-                    f"chunk {chunk_id} was never shown to the model",
+                    ref.chunk_id, "exists", f"chunk {ref.chunk_id} is not in the corpus"
                 )
             )
             continue
 
-        if chunk_id not in admissible.ids:
+        source = retrieved.get(ref.chunk_id)
+        if source is None:
             failures.append(
                 ValidationFailure(
-                    chunk_id,
+                    ref.chunk_id,
+                    "retrieved",
+                    f"chunk {ref.chunk_id} was never shown to the model",
+                )
+            )
+            continue
+
+        if ref.chunk_id not in admissible.ids:
+            failures.append(
+                ValidationFailure(
+                    ref.chunk_id,
                     "admissible",
-                    f"chunk {chunk_id} was not in force at {admissible.label}",
+                    f"chunk {ref.chunk_id} was not in force at {admissible.label}",
+                )
+            )
+            continue
+
+        if not ref.quote.strip():
+            failures.append(
+                ValidationFailure(
+                    ref.chunk_id, "quote", f"chunk {ref.chunk_id} was cited without a quote"
+                )
+            )
+            continue
+
+        if normalize(ref.quote) not in normalize(source.text):
+            failures.append(
+                ValidationFailure(
+                    ref.chunk_id, "quote", f"quoted text does not appear in chunk {ref.chunk_id}"
                 )
             )
 

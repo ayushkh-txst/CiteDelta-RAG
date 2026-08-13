@@ -61,7 +61,14 @@ def _service(fake: FakeCompletions) -> AnswerService:
 async def test_happy_path_returns_an_answer_with_citations() -> None:
     fake = FakeCompletions(
         responses=[
-            _model_says({"sufficient": True, "answer": "Sixty days [1].", "citation_ids": [1]})
+            _model_says(
+                {
+                    "out_of_scope": False,
+                    "sufficient": True,
+                    "answer": "Sixty days [1].",
+                    "citations": [{"id": 1, "quote": "Sample regulation text."}],
+                }
+            )
         ]
     )
     result = await _service(fake).answer(
@@ -81,9 +88,13 @@ async def test_fabricated_citation_destroys_the_answer() -> None:
         responses=[
             _model_says(
                 {
+                    "out_of_scope": False,
                     "sufficient": True,
                     "answer": "Sixty days [1], extendable to ninety [999].",
-                    "citation_ids": [1, 999],
+                    "citations": [
+                        {"id": 1, "quote": "Sample regulation text."},
+                        {"id": 999, "quote": "invented"},
+                    ],
                 }
             )
         ]
@@ -140,7 +151,9 @@ async def test_weak_retrieval_refuses_before_spending_a_token() -> None:
 @pytest.mark.asyncio
 async def test_model_declaring_insufficiency_is_a_refusal_not_an_empty_answer() -> None:
     fake = FakeCompletions(
-        responses=[_model_says({"sufficient": False, "answer": "", "citation_ids": []})]
+        responses=[
+            _model_says({"out_of_scope": False, "sufficient": False, "answer": "", "citations": []})
+        ]
     )
     result = await _service(fake).answer(
         trace=_trace(), candidates=[_citation(1)], admissible=_admissible({1})
@@ -194,7 +207,16 @@ async def test_only_admissible_text_reaches_the_model() -> None:
     """The temporal guarantee, asserted on the prompt itself: a chunk that
     was filtered out cannot be cited because it was never in the context."""
     fake = FakeCompletions(
-        responses=[_model_says({"sufficient": True, "answer": "x [1].", "citation_ids": [1]})]
+        responses=[
+            _model_says(
+                {
+                    "out_of_scope": False,
+                    "sufficient": True,
+                    "answer": "x [1].",
+                    "citations": [{"id": 1, "quote": "Sample regulation text."}],
+                }
+            )
+        ]
     )
     await _service(fake).answer(
         trace=_trace(), candidates=[_citation(1)], admissible=_admissible({1})
@@ -203,3 +225,86 @@ async def test_only_admissible_text_reaches_the_model() -> None:
     assert "[1]" in prompt
     assert "[999]" not in prompt
     assert "2026-08-11" in prompt
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_is_its_own_refusal() -> None:
+    fake = FakeCompletions(
+        responses=[
+            _model_says({"out_of_scope": True, "sufficient": False, "answer": "", "citations": []})
+        ]
+    )
+    result = await _service(fake).answer(
+        trace=_trace(), candidates=[_citation(1)], admissible=_admissible({1})
+    )
+    assert isinstance(result, Refusal)
+    assert result.reason is RefusalReason.OUT_OF_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_scope_is_checked_before_sufficiency() -> None:
+    """Both flags true-ish must resolve to OUT_OF_SCOPE — the two want
+    different copy and collapsing them loses that."""
+    fake = FakeCompletions(
+        responses=[
+            _model_says(
+                {
+                    "out_of_scope": True,
+                    "sufficient": True,
+                    "answer": "Paris [1].",
+                    "citations": [{"id": 1, "quote": "x"}],
+                }
+            )
+        ]
+    )
+    result = await _service(fake).answer(
+        trace=_trace(), candidates=[_citation(1)], admissible=_admissible({1})
+    )
+    assert isinstance(result, Refusal)
+    assert result.reason is RefusalReason.OUT_OF_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_unverifiable_quote_discards_the_answer() -> None:
+    """The most important test in the repo: an altered quote means the whole
+    answer goes, exactly like a fabricated id."""
+    fake = FakeCompletions(
+        responses=[
+            _model_says(
+                {
+                    "out_of_scope": False,
+                    "sufficient": True,
+                    "answer": "Sixty days [1].",
+                    "citations": [{"id": 1, "quote": "words that are not in the source"}],
+                }
+            )
+        ]
+    )
+    result = await _service(fake).answer(
+        trace=_trace(), candidates=[_citation(1)], admissible=_admissible({1})
+    )
+    assert result.refused
+    assert result.reason is RefusalReason.FABRICATED_CITATION
+    assert not hasattr(result, "text")
+
+
+@pytest.mark.asyncio
+async def test_verified_quote_reaches_the_citation() -> None:
+    """The sources panel bolds this string, so it has to survive the round trip."""
+    fake = FakeCompletions(
+        responses=[
+            _model_says(
+                {
+                    "out_of_scope": False,
+                    "sufficient": True,
+                    "answer": "Sixty days [1].",
+                    "citations": [{"id": 1, "quote": "Sample regulation text."}],
+                }
+            )
+        ]
+    )
+    result = await _service(fake).answer(
+        trace=_trace(), candidates=[_citation(1)], admissible=_admissible({1})
+    )
+    assert isinstance(result, Answer)
+    assert result.citations[0].quote == "Sample regulation text."

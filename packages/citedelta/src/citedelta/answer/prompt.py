@@ -38,6 +38,14 @@ not given to you.
 - If the excerpts do not answer the question, set "sufficient" to false and \
 leave "answer" empty. This is a good outcome, not a failure. Do not assemble a \
 partial answer from loosely related text.
+- Quote, don't paraphrase. For every id you cite, copy the exact words from \
+that excerpt that support your claim — character for character, at least a \
+full clause. Do not shorten with ellipses, do not tidy the wording, do not \
+join text from two places. Your quote is checked against the source and the \
+whole answer is discarded if it does not match.
+- If the question is not about immigration regulation at all — general \
+knowledge, personal advice, another area of law — set out_of_scope to true and \
+leave the answer empty. Do not try to find something adjacent in the excerpts.
 - Do not give legal advice, recommend a course of action, or estimate an \
 individual's eligibility. Describe what the regulation says.
 - Be direct. No preamble, no restating the question.\
@@ -46,26 +54,56 @@ individual's eligibility. Describe what the regulation says.
 RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "out_of_scope": {
+            "type": "boolean",
+            "description": (
+                "True if the question is not about US immigration regulation at "
+                "all — general knowledge, personal advice, or another area of "
+                "law. Distinct from a regulation question these excerpts "
+                "happen not to cover."
+            ),
+        },
         "sufficient": {
             "type": "boolean",
             "description": (
-                "True only if the provided excerpts contain enough to answer the question directly."
+                "True only if the excerpts contain enough to answer directly. "
+                "False when the question is in scope but the provisions in "
+                "force on this date do not address it."
             ),
         },
         "answer": {
             "type": "string",
             "description": (
-                "The answer, with inline id citations like [3]. Empty string "
-                "when sufficient is false."
+                "The answer, with inline id citations like [3]. Empty when "
+                "out_of_scope or not sufficient."
             ),
         },
-        "citation_ids": {
+        "citations": {
             "type": "array",
-            "items": {"type": "integer"},
-            "description": "Every excerpt id used, in order of first use.",
+            "description": "One entry per excerpt used, in order of first use.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "description": "The excerpt id, exactly as given.",
+                    },
+                    "quote": {
+                        "type": "string",
+                        "description": (
+                            "The exact words from that excerpt supporting the "
+                            "claim, copied character for character. At least a "
+                            "full clause. Never paraphrased, never elided with "
+                            "ellipses."
+                        ),
+                    },
+                },
+                "required": ["id", "quote"],
+                "additionalProperties": False,
+            },
         },
     },
-    "required": ["sufficient", "answer", "citation_ids"],
+    "required": ["out_of_scope", "sufficient", "answer", "citations"],
     "additionalProperties": False,
 }
 

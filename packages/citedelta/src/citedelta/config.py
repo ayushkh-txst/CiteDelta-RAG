@@ -22,7 +22,10 @@ class Settings(BaseSettings):
     log_level: str = "info"
     anthropic_api_key: str = ""
     llm_model: str = "claude-opus-5"
-    llm_max_tokens: int = 2048
+    # Verbatim quotes made answers longer: a two-citation answer now carries a
+    # full clause per citation, and 2048 output tokens truncated the JSON mid
+    # string. 4096 keeps the same answer quality while allowing the quotes.
+    llm_max_tokens: int = 4096
 
     @property
     def sqlalchemy_url(self) -> str:
