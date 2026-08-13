@@ -345,6 +345,7 @@ async def index(request: Request) -> HTMLResponse:
             "as_of": today.isoformat(),
             "today": today.isoformat(),
             "min_as_of": state.corpus_since.isoformat(),
+            "corpus_since": state.corpus_since.isoformat(),
             "presets": _presets(today, state.corpus_since),
             "query": None,
             "example_queries": EXAMPLE_QUERIES,

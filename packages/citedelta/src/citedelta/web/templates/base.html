@@ -4,18 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}CiteDelta{% endblock %}</title>
+
+  <!-- Preload the two faces that render above the fold. The mono stamps are
+       small and can wait; the serif carries the answer and cannot. -->
+  <link rel="preload" href="/static/fonts/Archivo.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/SourceSerif4.woff2" as="font" type="font/woff2" crossorigin>
+
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/stream.js" defer></script>
 </head>
 <body>
-<div class="wrap">
   <header class="masthead">
-    <div class="logo">Cite<span class="delta">Δ</span></div>
-    <div class="tagline">US immigration regulations, as they stood on any date</div>
-    <div class="corpus">8 CFR Part 214 · {{ corpus_size }} chunks</div>
+    <div class="logo">Cite<span class="d">Δ</span></div>
+    <div class="corpus">
+      8 CFR 214 · {{ snapshot_count }} amendments · {{ corpus_since[:4] }}–{{ today[:4] }}
+    </div>
   </header>
   {% block content %}{% endblock %}
-</div>
 </body>
 </html>
