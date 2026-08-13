@@ -78,7 +78,7 @@ retrieval one. No retrieval parameter was changed in response to any result.
 
 - **Answer quality.** Graders check that citations are real, retrieved, and in
   force. Whether the prose is a *good* summary is not measured — that needs
-  human judgement at a scale this sprint doesn't have.
+  human judgement at a scale this project doesn't have.
 - **Coverage of 8 CFR.** 60 cases over a 38,211-chunk corpus. It is a
   smoke test with teeth, not a coverage claim.
 - **Real user questions.** I wrote these. Actual users would ask worse ones,
