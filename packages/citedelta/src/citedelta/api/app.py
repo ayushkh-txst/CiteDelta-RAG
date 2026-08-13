@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from json import dumps
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -18,11 +20,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 from citedelta.answer.intent import Intent, classify
 from citedelta.answer.models import Answer, Citation, Refusal, RefusalReason
 from citedelta.answer.resolve import resolve_followup
+from citedelta.answer.service import PhaseHook
 from citedelta.api.state import AppState, build_state, close_state
 from citedelta.api.traces import load_thread, next_turn_index, persist
 from citedelta.bench.temporal import load_admissible
@@ -42,6 +45,24 @@ ASKS = Counter("citedelta_asks_total", "Questions asked", ["outcome"])
 LATENCY = Histogram("citedelta_ask_seconds", "End-to-end /ask latency")
 
 router = APIRouter()
+
+
+@dataclass
+class PendingTurn:
+    """An in-flight turn and its phase channel.
+
+    Held in process memory, which means this design assumes ONE worker.
+    That is already the shape of the deployment (the saturation curve and
+    the QPS knee are single-process numbers), so it is a documented
+    constraint rather than an accident. Multiple workers would need sticky
+    routing or a shared channel — noted in the runbook, not solved here.
+    """
+
+    queue: asyncio.Queue[str | None]
+    task: asyncio.Task[str]
+
+
+_PENDING: dict[str, PendingTurn] = {}
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 templates = Jinja2Templates(directory=str(WEB / "templates"))
@@ -187,10 +208,16 @@ async def ask(body: AskRequest, request: Request) -> AskResponse:
     )
 
 
-async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
+async def _run_ask(
+    state: AppState, body: AskRequest, *, on_phase: PhaseHook | None = None
+) -> dict[str, Any]:
     """The one code path behind both /ask and /ui/ask."""
     run_id = new_run_id()
     requested_as_of = body.as_of or datetime.now(UTC).date()
+
+    async def phase(text: str) -> None:
+        if on_phase is not None:
+            await on_phase(text)
 
     conversation_id = body.conversation_id or uuid4()
     turn_index = await next_turn_index(state.db, conversation_id)
@@ -226,6 +253,8 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
         }
 
     history = await load_thread(state.db, conversation_id)
+    if history:
+        await phase("Resolving the question")
     resolution = await resolve_followup(
         state.resolver_llm,
         question=body.query,
@@ -239,6 +268,7 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
     search_text = resolution.standalone_question
 
     with LATENCY.time():
+        await phase(f"Finding provisions in force on {as_of:%d %b %Y}")
         admissible = await load_admissible(as_of, state.corpus_size, db=state.db)
         # The internal label is "valid_on=YYYY-MM-DD" (benchmark-facing). The
         # product-facing label is the date itself, so the banner, the prompt,
@@ -264,6 +294,7 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
             admissible=admissible,
             run_id=run_id,
             k=body.k,
+            on_phase=phase,
         )
         # The resolver and the answer share a run_id in one ledger; the row's
         # cost is the turn's true cost across both calls, not just the answer.
@@ -287,6 +318,8 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
         "candidates": candidates,
         "trace_id": trace_id,
         "selectivity": len(admissible.ids) / admissible.corpus_size,
+        "resolved_query": search_text if search_text != body.query else None,
+        "as_of": as_of.isoformat(),
     }
 
 
@@ -316,6 +349,7 @@ async def index(request: Request) -> HTMLResponse:
             "query": None,
             "example_queries": EXAMPLE_QUERIES,
             "snapshot_count": state.snapshot_count,
+            "conversation_id": str(uuid4()),
         },
     )
 
@@ -325,28 +359,105 @@ async def ui_ask(
     request: Request,
     query: str = Form(...),
     as_of: date | None = Form(None),  # noqa: B008 - FastAPI form metadata
+    conversation_id: UUID | None = Form(None),  # noqa: B008
 ) -> HTMLResponse:
-    """The HTML twin of POST /ask.
+    """Start the turn, return the shell immediately.
 
-    Deliberately a separate route rather than content-negotiation on /ask.
-    The JSON API and the HTML UI have genuinely different contracts — the API
-    returns a trace_id, the UI returns rendered candidates — and one handler
-    branching on an Accept header to serve two contracts is how endpoints
-    become unmaintainable.
+    The shell renders the question straight away — the user sees their own
+    words land before any work happens, which is most of what makes an
+    interface feel responsive. The question itself is POSTed (never a query
+    string), because an EventSource can only GET and these questions carry
+    personal circumstances that should not land in access logs or browser
+    history.
     """
     state = ctx(request)
-    body = AskRequest(query=query, as_of=as_of)
-    payload = await _run_ask(state, body)
+    turn_id = uuid4().hex
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def emit(text: str) -> None:
+        await queue.put(text)
+
+    async def run() -> str:
+        try:
+            return await _run_turn_html(request, state, query, as_of, conversation_id, emit)
+        finally:
+            await queue.put(None)  # close the stream even if the turn raised
+
+    _PENDING[turn_id] = PendingTurn(queue=queue, task=asyncio.create_task(run()))
+
+    return templates.TemplateResponse(
+        request,
+        "partials/turn_pending.html",
+        {"turn_id": turn_id, "question": query, "as_of": (as_of or _today()).isoformat()},
+    )
+
+
+@router.get("/ui/turn/{turn_id}/stream")
+async def turn_stream(turn_id: str) -> StreamingResponse:
+    pending = _PENDING.get(turn_id)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="no such turn")
+
+    async def events() -> AsyncIterator[str]:
+        try:
+            while True:
+                item = await pending.queue.get()
+                if item is None:
+                    break
+                yield f"event: phase\ndata: {dumps(item)}\n\n"
+            try:
+                html = await pending.task
+            except Exception:
+                log.exception("turn.failed", turn_id=turn_id)
+                html = _error_html()
+            # One line, so the SSE frame stays well-formed.
+            yield f"event: done\ndata: {dumps(html)}\n\n"
+        finally:
+            _PENDING.pop(turn_id, None)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _error_html() -> str:
+    return (
+        '<div class="phase"><span class="mk">·</span>'
+        "<span>Something went wrong on our side. Ask again?</span></div>"
+    )
+
+
+async def _run_turn_html(
+    request: Request,
+    state: AppState,
+    query: str,
+    as_of: date | None,
+    conversation_id: UUID | None,
+    emit: PhaseHook,
+) -> str:
+    """Run one turn and render the finished turn's HTML.
+
+    The JSON and HTML paths share `_run_ask`; only the rendering differs.
+    `emit` carries the phase feed to the SSE stream.
+    """
+    body = AskRequest(query=query, as_of=as_of, conversation_id=conversation_id)
+    payload = await _run_ask(state, body, on_phase=emit)
 
     result = payload["result"]
-    as_of_date = body.as_of or datetime.now(UTC).date()
+    as_of_date = body.as_of or _today()
     citations = list(result.citations) if isinstance(result, Answer) else []
     ribbon = build_ribbon(citations, as_of=as_of_date)
     cited_ids = [c.chunk_id for c in citations]
     cited_index = {c.chunk_id: i + 1 for i, c in enumerate(citations)}
     max_score = max((c.rrf_score for c in payload["candidates"]), default=1.0) or 1.0
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "partials/answer.html",
         {
@@ -360,8 +471,10 @@ async def ui_ask(
             "cited_index": cited_index,
             "max_score": max_score,
             "corpus_since": state.corpus_since.isoformat(),
+            "resolved_query": payload.get("resolved_query"),
         },
     )
+    return bytes(response.body).decode()
 
 
 @router.get("/compare", response_class=HTMLResponse)

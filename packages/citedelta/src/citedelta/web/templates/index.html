@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 
-<form class="askbar"
+<form class="askbar" data-composer
       hx-post="/ui/ask"
-      hx-target="#result"
-      hx-swap="innerHTML"
-      hx-indicator="#asking">
+      hx-target="#transcript"
+      hx-swap="beforeend"
+      hx-disabled-elt="find button">
+  <input type="hidden" name="conversation_id" value="{{ conversation_id }}">
   <div class="askrow">
     <div class="q">
       <label for="q">Question</label>
@@ -19,10 +20,7 @@
              min="{{ min_as_of }}" max="{{ today }}">
     </div>
     <div class="go">
-      <button class="primary" type="submit">
-        <span class="htmx-indicator-hide">Ask</span>
-        <span id="asking" class="htmx-indicator">Asking…</span>
-      </button>
+      <button class="primary" type="submit">Ask</button>
     </div>
   </div>
   <div class="presets">
@@ -36,7 +34,7 @@
   </div>
 </form>
 
-<div id="result">{% block result %}
+<div id="transcript">{% block result %}
   {% if not result %}
   <div class="card">
     <h2>Try one of these</h2>

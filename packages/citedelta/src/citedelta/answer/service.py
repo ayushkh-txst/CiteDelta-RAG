@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from decimal import Decimal
 
@@ -34,6 +35,8 @@ from substrate.llm import (
 
 log = structlog.get_logger(__name__)
 
+PhaseHook = Callable[[str], Awaitable[None]]
+
 
 class AnswerService:
     def __init__(
@@ -57,11 +60,20 @@ class AnswerService:
         admissible: AdmissibleSet,
         run_id: str = "adhoc",
         k: int = 8,
+        on_phase: PhaseHook | None = None,
     ) -> AnswerResult:
         started = time.perf_counter()
 
         def elapsed() -> float:
             return (time.perf_counter() - started) * 1000
+
+        async def phase(text: str) -> None:
+            """A no-op when nobody is listening, so the JSON path and the
+            eval run identically to before. The transport does not leak in
+            here — the service says what it is doing, and whoever cares
+            decides how to show it."""
+            if on_phase is not None:
+                await on_phase(text)
 
         # A greeting must cost nothing and return instantly. It sits ahead of
         # the gate rather than after it: running retrieval on "hello" wastes
@@ -92,6 +104,7 @@ class AnswerService:
             )
 
         shown = self._reranker.rerank(trace.query, candidates, k=k)
+        await phase(f"Reading {len(shown)} passages in force on {trace.as_of}")
         request = CompletionRequest(
             model=self._model,
             system=SYSTEM_PROMPT,
@@ -101,6 +114,7 @@ class AnswerService:
             run_id=run_id,
         )
 
+        await phase("Drafting the answer")
         try:
             response = await self._llm.complete(request)
         except CompletionError as exc:
@@ -161,6 +175,7 @@ class AnswerService:
             )
 
         by_id = {c.chunk_id: c for c in shown}
+        await phase(f"Verifying {len(refs)} citations")
         result = validate_citations(refs, retrieved=by_id, admissible=admissible)
         if not result.ok:
             # Note what is NOT logged: the answer text. It is discarded here
