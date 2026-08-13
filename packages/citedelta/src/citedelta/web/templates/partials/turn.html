@@ -1,0 +1,34 @@
+<article class="turn {% if turn.continuation %}cont{% endif %}">
+  <div class="stamp" aria-label="As of {{ turn.stamp_day }} {{ turn.stamp_year }}">
+    <span class="day">{{ turn.stamp_day }}</span>
+    <span class="year">{{ turn.stamp_year }}</span>
+  </div>
+
+  <div class="body">
+    <h2 class="question">{{ turn.question }}</h2>
+
+    {% if turn.resolved_query %}
+      <p class="resolved">
+        <span class="arrow" aria-hidden="true">↳</span>
+        <span>searched: {{ turn.resolved_query }}</span>
+      </p>
+    {% endif %}
+
+    {% set r = turn.result %}
+    {% if not r.refused %}
+      <div class="answer">{{ r.text | citation_chips(r.citations) | safe }}</div>
+      {% include "partials/sources.html" %}
+      {% include "partials/compare_picker.html" %}
+      {% include "partials/trace.html" %}
+
+    {% elif r.reason.value == 'greeting' %}
+      <div class="greeting">
+        <p>{{ r.detail | markdown_lite | safe }}</p>
+        <span class="free">No search run · no cost</span>
+      </div>
+
+    {% else %}
+      {% include "partials/declined.html" %}
+    {% endif %}
+  </div>
+</article>

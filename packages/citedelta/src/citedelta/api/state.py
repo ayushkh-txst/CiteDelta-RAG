@@ -40,6 +40,11 @@ class AppState:
     """Number of distinct effective dates in the corpus — how many times the
     regulation was captured."""
 
+    amendment_dates: list[date]
+    """The 78 real effective dates, sorted, read-only. Every turn's gutter and
+    rupture arithmetic needs them, so they load once at startup rather than
+    on the request path."""
+
 
 async def build_state(settings: Settings) -> AppState:
     """Load once. Everything here is read-only afterwards, which is what
@@ -57,10 +62,19 @@ async def build_state(settings: Settings) -> AppState:
         snapshot_count = await conn.fetchval(
             "SELECT count(DISTINCT effective_from) FROM section_versions"
         )
+        rows = await conn.fetch(
+            "SELECT DISTINCT effective_from FROM section_versions ORDER BY effective_from"
+        )
     if corpus_since is None:
         log.warning("api.corpus_empty")
         corpus_since = date(2016, 1, 1)
-    log.info("api.corpus_since", since=str(corpus_since), snapshots=snapshot_count)
+    amendment_dates = [r["effective_from"] for r in rows]
+    log.info(
+        "api.corpus_since",
+        since=str(corpus_since),
+        snapshots=snapshot_count,
+        amendments=len(amendment_dates),
+    )
 
     ids, vectors = await load_corpus_vectors()
     log.info("api.vectors_loaded", count=len(ids), mb=round(vectors.nbytes / 1e6, 1))
@@ -97,7 +111,8 @@ async def build_state(settings: Settings) -> AppState:
         ledger=ledger,
         corpus_size=len(ids),
         corpus_since=corpus_since,
-        snapshot_count=snapshot_count,
+        snapshot_count=len(amendment_dates),
+        amendment_dates=amendment_dates,
     )
 
 

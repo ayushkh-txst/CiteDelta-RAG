@@ -18,12 +18,13 @@ from fastapi import APIRouter, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
 from starlette.responses import Response, StreamingResponse
 
 from citedelta.answer.intent import Intent, classify
-from citedelta.answer.models import Answer, Citation, Refusal, RefusalReason
+from citedelta.answer.models import Answer, AnswerResult, Citation, Refusal, RefusalReason
 from citedelta.answer.resolve import resolve_followup
 from citedelta.answer.service import PhaseHook
 from citedelta.api.state import AppState, build_state, close_state
@@ -34,8 +35,21 @@ from citedelta.retrieve import RetrievalTrace, hybrid_search
 from citedelta.temporal import AdmissibleSet
 from citedelta.web.copy import GREETING_REPLY, REFUSAL_HELP, REFUSAL_LABELS
 from citedelta.web.diff import diff_pair
-from citedelta.web.filters import citation_chips
-from citedelta.web.ribbon import build_ribbon
+from citedelta.web.filters import (
+    citation_chips,
+    compare_dates,
+    highlight_quote,
+    markdown_lite,
+    ordinal,
+    strength,
+)
+from citedelta.web.transcript import (
+    Rupture,
+    TurnView,
+    amendments_between,
+    build_transcript,
+)
+from substrate.db import Database
 from substrate.llm import CompletionError
 from substrate.obs import new_run_id
 
@@ -67,14 +81,12 @@ _PENDING: dict[str, PendingTurn] = {}
 WEB = Path(__file__).resolve().parent.parent / "web"
 templates = Jinja2Templates(directory=str(WEB / "templates"))
 templates.env.filters["citation_chips"] = citation_chips
+templates.env.filters["markdown_lite"] = markdown_lite
+templates.env.filters["highlight_quote"] = highlight_quote
+templates.env.filters["ordinal"] = ordinal
+templates.env.filters["strength"] = strength
 templates.env.globals["REFUSAL_LABELS"] = REFUSAL_LABELS
 templates.env.globals["REFUSAL_HELP"] = REFUSAL_HELP
-
-EXAMPLE_QUERIES = (
-    "Can an F-1 student transfer to another school?",
-    "What is the grace period after F-1 program completion?",
-    "What is the duration of a student's practical training?",
-)
 
 
 class AskRequest(BaseModel):
@@ -323,38 +335,6 @@ async def _run_ask(
     }
 
 
-def _presets(today: date, corpus_since: date) -> list[tuple[str, str]]:
-    return [
-        ("Today", today.isoformat()),
-        ("2019", "2019-06-01"),
-        # "2016" must land inside the corpus, not in the gap before it — a
-        # preset that always refused would look like a bug.
-        ("2016", max(date(2016, 6, 1), corpus_since).isoformat()),
-    ]
-
-
-@router.get("/", response_class=HTMLResponse)
-async def index(request: Request) -> HTMLResponse:
-    state = ctx(request)
-    today = datetime.now(UTC).date()
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "corpus_size": f"{state.corpus_size:,}",
-            "as_of": today.isoformat(),
-            "today": today.isoformat(),
-            "min_as_of": state.corpus_since.isoformat(),
-            "corpus_since": state.corpus_since.isoformat(),
-            "presets": _presets(today, state.corpus_since),
-            "query": None,
-            "example_queries": EXAMPLE_QUERIES,
-            "snapshot_count": state.snapshot_count,
-            "conversation_id": str(uuid4()),
-        },
-    )
-
-
 @router.post("/ui/ask", response_class=HTMLResponse)
 async def ui_ask(
     request: Request,
@@ -386,10 +366,17 @@ async def ui_ask(
 
     _PENDING[turn_id] = PendingTurn(queue=queue, task=asyncio.create_task(run()))
 
+    pending_date = as_of or _today()
     return templates.TemplateResponse(
         request,
         "partials/turn_pending.html",
-        {"turn_id": turn_id, "question": query, "as_of": (as_of or _today()).isoformat()},
+        {
+            "turn_id": turn_id,
+            "question": query,
+            "as_of": pending_date.isoformat(),
+            "stamp_day": f"{pending_date.day} {pending_date:%b}",
+            "stamp_year": f"{pending_date:%Y}",
+        },
     )
 
 
@@ -434,6 +421,41 @@ def _error_html() -> str:
     )
 
 
+def _render_turn_fragment(
+    request: Request,
+    state: AppState,
+    *,
+    turn: TurnView,
+    candidates: list[Citation],
+    cited_ids: list[int],
+    max_score: float,
+    trace_id: int,
+) -> str:
+    """One turn's HTML. The rupture prefix is added by the caller, which
+    knows the previous turn's date."""
+    options = (
+        compare_dates(
+            list(turn.result.citations), as_of=turn.as_of, corpus_since=state.corpus_since
+        )
+        if isinstance(turn.result, Answer) and turn.result.citations
+        else []
+    )
+    response = templates.TemplateResponse(
+        request,
+        "partials/turn.html",
+        {
+            "turn": turn,
+            "candidates": candidates,
+            "cited_ids": cited_ids,
+            "max_score": max_score,
+            "trace_id": trace_id,
+            "compare_options": options,
+            "corpus_since": state.corpus_since.isoformat(),
+        },
+    )
+    return bytes(response.body).decode()
+
+
 async def _run_turn_html(
     request: Request,
     state: AppState,
@@ -445,52 +467,139 @@ async def _run_turn_html(
     """Run one turn and render the finished turn's HTML.
 
     The JSON and HTML paths share `_run_ask`; only the rendering differs.
-    `emit` carries the phase feed to the SSE stream.
+    `emit` carries the phase feed to the SSE stream. The fragment includes a
+    rupture when this turn's as-of differs from the previous turn's, so the
+    appended record reads as an event rather than an unexplained new date.
     """
-    body = AskRequest(query=query, as_of=as_of, conversation_id=conversation_id)
+    effective_cid = conversation_id or uuid4()
+    body = AskRequest(query=query, as_of=as_of, conversation_id=effective_cid)
     payload = await _run_ask(state, body, on_phase=emit)
 
     result = payload["result"]
-    as_of_date = body.as_of or _today()
+    turn_as_of = date.fromisoformat(payload["as_of"])
+
+    history = await load_thread(state.db, effective_cid, limit=2)
+    previous = history[-1] if history else None
+    continuation = previous is not None and previous.as_of == turn_as_of
+
+    turn = TurnView(
+        question=body.query,
+        as_of=turn_as_of,
+        result=result,
+        resolved_query=payload.get("resolved_query"),
+        continuation=continuation,
+    )
+
+    prefix = ""
+    if previous is not None and previous.as_of != turn_as_of:
+        rupture = Rupture(
+            as_of=turn_as_of,
+            amendments_between=amendments_between(
+                previous.as_of, turn_as_of, state.amendment_dates
+            ),
+            earlier=turn_as_of < previous.as_of,
+        )
+        prefix = bytes(
+            templates.TemplateResponse(request, "partials/rupture.html", {"entry": rupture}).body
+        ).decode()
+
     citations = list(result.citations) if isinstance(result, Answer) else []
-    ribbon = build_ribbon(citations, as_of=as_of_date)
     cited_ids = [c.chunk_id for c in citations]
-    cited_index = {c.chunk_id: i + 1 for i, c in enumerate(citations)}
     max_score = max((c.rrf_score for c in payload["candidates"]), default=1.0) or 1.0
 
-    response = templates.TemplateResponse(
+    return prefix + _render_turn_fragment(
         request,
-        "partials/answer.html",
+        state,
+        turn=turn,
+        candidates=payload["candidates"],
+        cited_ids=cited_ids,
+        max_score=max_score,
+        trace_id=payload["trace_id"],
+    )
+
+
+@router.get("/", response_class=HTMLResponse)
+async def index(request: Request) -> HTMLResponse:
+    state = ctx(request)
+    today = _today()
+    conversation_id = uuid4()
+    return templates.TemplateResponse(
+        request,
+        "chat.html",
         {
-            "result": result,
-            "selectivity": payload["selectivity"],
-            "candidate_count": len(payload["candidates"]),
-            "candidates": payload["candidates"],
-            "trace_id": payload["trace_id"],
-            "ribbon": ribbon,
-            "cited_ids": cited_ids,
-            "cited_index": cited_index,
-            "max_score": max_score,
+            "transcript_html": await _render_thread_html(request, state, conversation_id),
+            "conversation_id": str(conversation_id),
+            "as_of": today.isoformat(),
+            "as_of_label": today.strftime("%-d %b %Y"),
             "corpus_since": state.corpus_since.isoformat(),
-            "resolved_query": payload.get("resolved_query"),
+            "today": today.isoformat(),
+            "snapshot_count": state.snapshot_count,
         },
     )
-    return bytes(response.body).decode()
 
 
-@router.get("/compare", response_class=HTMLResponse)
-async def compare(
+@dataclass(frozen=True, slots=True)
+class RenderableTurn:
+    """A rebuilt turn plus everything its disclosures need to render.
+
+    The disclosure partials (Sources, Compare, Trace) need the full candidate
+    list — including uncited rows — which lives in the trace, not on the
+    `TurnView`. This bundles them so the transcript can be rendered from the
+    database exactly as the live turn was rendered from memory.
+    """
+
+    turn: TurnView
+    candidates: list[Citation]
+    cited_ids: list[int]
+    max_score: float
+    trace_id: int
+
+
+async def _render_thread_html(request: Request, state: AppState, conversation_id: UUID) -> Markup:
+    """Render every turn of a conversation as one safe HTML fragment."""
+    thread = await _turns_for_thread(state.db, conversation_id)
+    entries = build_transcript([t.turn for t in thread], amendment_dates=state.amendment_dates)
+    by_identity = {id(t.turn): t for t in thread}
+    fragments: list[str] = []
+    for entry in entries:
+        if isinstance(entry, Rupture):
+            fragments.append(
+                bytes(
+                    templates.TemplateResponse(
+                        request, "partials/rupture.html", {"entry": entry}
+                    ).body
+                ).decode()
+            )
+        else:
+            renderable = by_identity[id(entry)]
+            fragments.append(
+                _render_turn_fragment(
+                    request,
+                    state,
+                    turn=entry,
+                    candidates=renderable.candidates,
+                    cited_ids=renderable.cited_ids,
+                    max_score=renderable.max_score,
+                    trace_id=renderable.trace_id,
+                )
+            )
+    return Markup("".join(fragments))  # noqa: S704 - each fragment escaped during rendering
+
+
+@router.post("/ui/compare", response_class=HTMLResponse)
+async def ui_compare(
     request: Request,
-    query: str,
-    left: date,
-    right: date,
+    query: str = Form(...),
+    left: date = Form(...),  # noqa: B008
+    right: date = Form(...),  # noqa: B008
+    conversation_id: UUID | None = Form(None),  # noqa: B008
 ) -> HTMLResponse:
-    """Same question, two dates. Two full runs, deliberately.
+    """Two full runs, deliberately.
 
-    Not a cached re-render of one run: the two dates have different admissible
-    sets, so retrieval genuinely differs. Reusing one result and re-filtering
-    it afterwards would be post-filtering — the exact mistake the temporal
-    benchmarks measured the cost of.
+    Not one run re-filtered for each date: the two dates have different
+    admissible sets, so retrieval genuinely differs. Reusing one result and
+    filtering it afterwards is post-filtering — and the temporal benchmarks
+    measured what that costs at this corpus's ~2% selectivity.
     """
     state = ctx(request)
     a = await _run_ask(state, AskRequest(query=query, as_of=left))
@@ -502,16 +611,15 @@ async def compare(
 
     return templates.TemplateResponse(
         request,
-        "compare.html",
+        "partials/compare_turn.html",
         {
-            "corpus_size": f"{state.corpus_size:,}",
             "query": query,
-            "left": a,
-            "right": b,
-            "left_date": left.isoformat(),
-            "right_date": right.isoformat(),
+            "left_date": left,
+            "right_date": right,
             "left_html": left_html,
             "right_html": right_html,
+            "left_refused": a["result"].refused,
+            "right_refused": b["result"].refused,
         },
     )
 
@@ -523,6 +631,110 @@ async def get_trace(trace_id: int, request: Request) -> dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="no such trace")
     return {k: _jsonable(v) for k, v in dict(row).items()}
+
+
+async def _turns_for_thread(
+    db: Database, conversation_id: UUID, *, limit: int = 40
+) -> list[RenderableTurn]:
+    """Rebuild the renderable record for a conversation from its traces.
+
+    The trace rows keep the candidates (ids, dates, ranks, and now the
+    verified quotes) but only a snippet of each chunk's text, so the full
+    provision text is re-hydrated from Postgres to render Sources. This is
+    what lets the transcript page show old turns with their disclosures,
+    not just the turn that was streamed in live.
+    """
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM query_traces
+               WHERE conversation_id = $1
+               ORDER BY turn_index ASC
+               LIMIT $2""",
+            conversation_id,
+            limit,
+        )
+        chunk_ids = {int(c["chunk_id"]) for r in rows for c in (r["candidates"] or [])}
+        texts: dict[int, str] = {}
+        for start in range(0, len(chunk_ids), 500):
+            batch = list(chunk_ids)[start : start + 500]
+            if not batch:
+                continue
+            texts.update(
+                {
+                    int(r["id"]): str(r["text"])
+                    for r in await conn.fetch(
+                        "SELECT id, text FROM chunks WHERE id = ANY($1::bigint[])",
+                        batch,
+                    )
+                }
+            )
+
+    views: list[RenderableTurn] = []
+    previous: date | None = None
+    for r in rows:
+        as_of = r["as_of"]
+        candidates = [
+            Citation(
+                chunk_id=int(c["chunk_id"]),
+                citation_path=str(c["citation_path"]),
+                effective_from=str(c["effective_from"]),
+                effective_to=c["effective_to"],
+                text=texts.get(int(c["chunk_id"]), str(c.get("snippet") or "")),
+                rrf_score=float(c["rrf_score"]),
+                ranks=dict(c.get("ranks") or {}),
+                quote=str(c.get("quote") or ""),
+            )
+            for c in (r["candidates"] or [])
+        ]
+        cited_ids = list(r["cited_ids"] or [])
+        citations = tuple(c for c in candidates if c.chunk_id in cited_ids)
+        trace = RetrievalTrace(
+            query=str(r["query"]),
+            as_of=r["as_of"].isoformat(),
+            selectivity=float(r["selectivity"] or 0.0),
+            candidates_lexical=int(r["candidates_lexical"] or 0),
+            candidates_vector=int(r["candidates_vector"] or 0),
+            fused=len(candidates),
+            hits=[],
+        )
+        if r["answer"] is not None:
+            result: AnswerResult = Answer(
+                query=str(r["query"]),
+                as_of=r["as_of"].isoformat(),
+                text=str(r["answer"]),
+                citations=citations,
+                trace=trace,
+                cost_usd=r["cost_usd"],
+                latency_ms=float(r["latency_ms"] or 0.0),
+            )
+        else:
+            result = Refusal(
+                query=str(r["query"]),
+                as_of=r["as_of"].isoformat(),
+                reason=RefusalReason(str(r["refusal_reason"])),
+                detail=str(r["refusal_detail"] or ""),
+                trace=trace,
+                cost_usd=r["cost_usd"],
+                latency_ms=float(r["latency_ms"] or 0.0),
+            )
+        resolved = r["resolved_query"]
+        views.append(
+            RenderableTurn(
+                turn=TurnView(
+                    question=str(r["query"]),
+                    as_of=as_of,
+                    result=result,
+                    resolved_query=str(resolved) if resolved and resolved != r["query"] else None,
+                    continuation=previous is not None and previous == as_of,
+                ),
+                candidates=candidates,
+                cited_ids=cited_ids,
+                max_score=max((c.rrf_score for c in candidates), default=1.0) or 1.0,
+                trace_id=int(r["id"]),
+            )
+        )
+        previous = as_of
+    return views
 
 
 async def _hydrate(state: AppState, trace: RetrievalTrace) -> list[Citation]:

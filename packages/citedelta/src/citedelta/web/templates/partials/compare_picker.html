@@ -1,0 +1,24 @@
+{% set options = compare_options %}
+{% if options %}
+<details class="disc">
+  <summary>Compare across dates</summary>
+  <p class="cmp-hint">
+    Answer this same question as the regulation stood on another date, side by
+    side. These are the dates the cited provisions actually changed — comparing
+    against any other date would give you the same answer twice.
+  </p>
+  <div class="cmp-row">
+    <span class="cmp-anchor">{{ turn.as_of.strftime('%-d %b %Y') }} vs</span>
+    {% for d in options %}
+      <button class="cmp-chip" type="button"
+              hx-post="/ui/compare" hx-target="#transcript" hx-swap="beforeend"
+              hx-vals='{"query": {{ (turn.resolved_query or turn.question) | tojson }},
+                        "left": "{{ d.isoformat() }}",
+                        "right": "{{ turn.as_of.isoformat() }}"}'>
+        {{ d.strftime('%-d %b %Y') }}
+      </button>
+    {% endfor %}
+    <button class="cmp-chip other" type="button" data-compare-other>another date…</button>
+  </div>
+</details>
+{% endif %}

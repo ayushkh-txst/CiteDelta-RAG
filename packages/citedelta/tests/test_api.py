@@ -122,6 +122,70 @@ async def test_query_column_stores_what_the_user_said_not_what_was_searched(
 
 
 @pytest.mark.asyncio
+async def test_thread_reconstruction_restores_turns_quotes_and_continuation(
+    clean_db: Database,
+) -> None:
+    """The transcript page re-renders old turns from their traces; the quote
+    must survive the round trip so Sources can bold it."""
+    from dataclasses import replace as dataclass_replace
+    from uuid import uuid4
+
+    from citedelta.answer.models import Answer
+    from citedelta.api.app import _turns_for_thread
+
+    conversation_id = uuid4()
+    trace = RetrievalTrace(query="q1", as_of="2019-04-12", selectivity=0.02, fused=1, hits=[])
+    cited = dataclass_replace(_citation(1, 1), quote="some words from the source")
+    first = Answer(
+        query="q1",
+        as_of="2019-04-12",
+        text="answer [1]",
+        citations=(cited,),
+        trace=trace,
+        cost_usd=Decimal(0),
+        latency_ms=1.0,
+    )
+    trace_id = await persist(
+        clean_db,
+        result=first,
+        candidates=[cited],
+        as_of=date(2019, 4, 12),
+        run_id="r1",
+        conversation_id=conversation_id,
+        turn_index=0,
+    )
+    second = Answer(
+        query="what about now?",
+        as_of="2026-08-13",
+        text="answer [1]",
+        citations=(cited,),
+        trace=trace,
+        cost_usd=Decimal(0),
+        latency_ms=1.0,
+    )
+    await persist(
+        clean_db,
+        result=second,
+        candidates=[cited],
+        as_of=date(2026, 8, 13),
+        run_id="r2",
+        conversation_id=conversation_id,
+        turn_index=1,
+        query="what about now?",
+        resolved_query="grace period after F-1",
+    )
+
+    turns = await _turns_for_thread(clean_db, conversation_id)
+    assert len(turns) == 2
+    assert turns[0].turn.as_of == date(2019, 4, 12)
+    assert turns[0].turn.continuation is False
+    assert turns[1].turn.as_of == date(2026, 8, 13)
+    assert turns[1].turn.resolved_query == "grace period after F-1"
+    assert turns[0].candidates[0].quote == "some words from the source"
+    assert turns[0].trace_id == trace_id
+
+
+@pytest.mark.asyncio
 async def test_a_row_cannot_be_both_answer_and_refusal(clean_db: Database) -> None:
     """The XOR constraint, asserted. If this ever passes, the invariant has
     quietly been dropped from the schema."""

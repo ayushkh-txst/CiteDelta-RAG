@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+
+<main class="transcript" id="transcript">
+  {% if not transcript_html %}
+    {% include "partials/empty.html" %}
+  {% endif %}
+  {{ transcript_html }}
+</main>
+
+{% include "partials/composer.html" %}
+{% endblock %}

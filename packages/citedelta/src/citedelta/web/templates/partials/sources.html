@@ -1,0 +1,24 @@
+<details class="disc">
+  <summary>
+    Sources
+    <span class="verified">
+      {{ r.citations | length }} quote{{ '' if r.citations|length == 1 else 's' }} verified
+    </span>
+  </summary>
+  {% for c in r.citations %}
+  <div class="source">
+    <div class="src-head">
+      <span class="src-num">{{ loop.index }}</span>
+      <span class="src-path">{{ c.citation_path }}</span>
+      {% if c.effective_to %}
+        <span class="badge aged">in force {{ c.in_force_label }}</span>
+      {% else %}
+        <span class="badge inforce">in force {{ c.in_force_label }}</span>
+      {% endif %}
+    </div>
+    <p class="src-body">{{ c.text | highlight_quote(c.quote) | safe }}</p>
+    <a class="src-link" target="_blank" rel="noopener"
+       href="https://www.ecfr.gov/current/title-8/section-214.2">View on eCFR ↗</a>
+  </div>
+  {% endfor %}
+</details>

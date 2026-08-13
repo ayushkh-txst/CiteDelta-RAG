@@ -1,0 +1,6 @@
+{% set hard = r.reason.value == 'fabricated_citation' %}
+<div class="declined {% if hard %}hard{% endif %}">
+  <span class="tag">{{ REFUSAL_LABELS[r.reason.value] }}</span>
+  <p class="said">{{ r.detail }}</p>
+  <div class="next">{{ REFUSAL_HELP[r.reason.value] }}</div>
+</div>

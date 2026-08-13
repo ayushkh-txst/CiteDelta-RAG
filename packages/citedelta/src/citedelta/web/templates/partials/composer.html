@@ -1,0 +1,27 @@
+<form class="composer" data-composer
+      hx-post="/ui/ask"
+      hx-target="#transcript"
+      hx-swap="beforeend"
+      hx-disabled-elt="find button">
+  <input type="hidden" name="conversation_id" value="{{ conversation_id }}">
+  <div class="composer-inner">
+    <button class="asof" type="button" data-asof-open
+            aria-label="Change the date answers are based on">
+      <span class="k">as of</span>
+      <span class="v">{{ as_of_label }}</span>
+      <span aria-hidden="true">▾</span>
+    </button>
+    <div class="field">
+      <input type="text" name="query" required minlength="3" maxlength="500"
+             autocomplete="off"
+             placeholder="Ask about 8 CFR 214 — or say “what about in 2019?”"
+             aria-label="Your question">
+    </div>
+    <button class="send" type="submit">Ask</button>
+  </div>
+  <p class="composer-note">
+    Answers quote the regulation as it stood on the selected date. Not legal
+    advice, and no assessment of individual eligibility.
+  </p>
+  <input type="hidden" name="as_of" value="{{ as_of }}" data-asof-value>
+</form>

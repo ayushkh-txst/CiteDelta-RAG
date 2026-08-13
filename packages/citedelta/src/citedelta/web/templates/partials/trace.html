@@ -1,46 +1,36 @@
-<details class="trace">
-  <summary>
-    Retrieval trace — {{ candidates|length }} candidates,
-    {{ cited_ids|length }} cited
-  </summary>
-  <div class="trace-body">
-    <table class="trace-table">
+<details class="disc">
+  <summary>How this answer was found</summary>
+  <div class="trace-scroll">
+    <table class="trace">
       <thead>
         <tr>
-          <th><span class="sr-only">Cited</span></th>
-          <th>Citation</th><th>BM25</th><th>Vector</th>
-          <th>RRF score</th><th>In force</th>
+          <th><span class="sr-only">Used in the answer</span></th>
+          <th>Provision</th>
+          <th>Found by wording</th>
+          <th>Found by meaning</th>
+          <th>Combined</th>
         </tr>
       </thead>
       <tbody>
       {% for c in candidates %}
-        {% set cited = c.chunk_id in cited_ids %}
-        <tr class="{% if not cited %}uncited{% endif %}"
-            {% if cited %}id="cite-{{ cited_index[c.chunk_id] }}"{% endif %}>
-          <td class="cited-dot">{% if cited %}●{% endif %}</td>
-          <td class="path">{{ c.citation_path.replace('8 CFR ', '') }}</td>
-          <td>{% if c.ranks.lexical %}{{ c.ranks.lexical }}
-              {% else %}<span class="rank-none">—</span>{% endif %}</td>
-          <td>{% if c.ranks.vector %}{{ c.ranks.vector }}
-              {% else %}<span class="rank-none">—</span>{% endif %}</td>
-          <td>
-            <span class="scorebar">
-              <span class="track">
-                <span class="fill" style="width:{{ (c.rrf_score / max_score * 100)|round|int }}%"></span>
-              </span>
-              {{ '%.4f'|format(c.rrf_score) }}
-            </span>
-          </td>
-          <td>{{ c.in_force_label }}</td>
+        {% set used = c.chunk_id in cited_ids %}
+        <tr class="{{ '' if used else 'unused' }}">
+          <td class="used">{{ '●' if used else '' }}</td>
+          <td class="p">{{ c.citation_path.replace('8 CFR ', '') }}</td>
+          <td>{% if c.ranks.lexical %}{{ c.ranks.lexical | ordinal }}
+              {% else %}<span class="no">not found</span>{% endif %}</td>
+          <td>{% if c.ranks.vector %}{{ c.ranks.vector | ordinal }}
+              {% else %}<span class="no">not found</span>{% endif %}</td>
+          <td>{{ c.rrf_score | strength(max_score) }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-    <p class="trace-note">
-      Rows without a dot were retrieved but not cited — they were shown to the
-      model and it chose not to use them. A dash means that retriever never
-      returned the chunk at all. That disagreement is what fusion exists to
-      resolve.
-    </p>
   </div>
+  <p class="trace-note">
+    {{ candidates | length }} provisions in force on {{ turn.as_of.strftime('%-d %b %Y') }}
+    were read; {{ cited_ids | length }} were used. Rows marked “not found” were
+    surfaced by only one of the two search methods — CiteDelta runs both and
+    combines them.
+  </p>
 </details>

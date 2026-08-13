@@ -73,6 +73,9 @@ def _candidate_rows(candidates: list[Citation]) -> list[dict[str, Any]]:
             "rrf_score": c.rrf_score,
             "ranks": c.ranks,
             "snippet": c.text[:400],
+            # The verified verbatim quote, so a transcript re-rendered from
+            # the trace can still show the bolded span in Sources.
+            "quote": c.quote,
         }
         for c in candidates
     ]

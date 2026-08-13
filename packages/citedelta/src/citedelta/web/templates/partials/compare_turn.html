@@ -1,0 +1,24 @@
+<article class="turn">
+  <div class="stamp"><span class="day">cmp</span><span class="year"></span></div>
+  <div class="body">
+    <h2 class="question">{{ query }}</h2>
+    <div class="compare">
+      <div class="col then">
+        <div class="col-head">As of {{ left_date.strftime('%-d %b %Y') }}</div>
+        {% if left_refused %}
+          <p class="declined">No answer on this date.</p>
+        {% else %}
+          <div class="answer">{{ left_html }}</div>
+        {% endif %}
+      </div>
+      <div class="col now">
+        <div class="col-head">As of {{ right_date.strftime('%-d %b %Y') }}</div>
+        {% if right_refused %}
+          <p class="declined">No answer on this date.</p>
+        {% else %}
+          <div class="answer">{{ right_html }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</article>
