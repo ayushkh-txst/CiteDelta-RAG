@@ -19,6 +19,23 @@ class RefusalReason(StrEnum):
     decision not to answer.
     """
 
+    GREETING = "greeting"
+    """Not a regulation question. Recorded as a refusal because no question
+    was answered — which is accurate — but RENDERED as a conversation, not
+    as a refusal card. See web/copy.py and the turn partial.
+
+    Keeping this inside RefusalReason rather than adding a third result type
+    is deliberate: `query_traces` has a CHECK constraint asserting a row is
+    an answer XOR a refusal, and persist() plus every reader depends on
+    exactly two outcomes. A third kind would ripple through the schema, the
+    constraint, and the trace API to express something the UI can express
+    with one branch."""
+
+    OUT_OF_SCOPE = "out_of_scope"
+    """A real question, but not about this corpus. Set by the model, not by
+    a retrieval threshold — measured, no scoring gate can separate 'out of
+    scope' from 'not relevant'."""
+
     NO_ADMISSIBLE_SOURCE = "no_admissible_source"
     """Nothing in the corpus was in force at as_of that matched. Common and
     correct when time-travelling to before a provision existed."""

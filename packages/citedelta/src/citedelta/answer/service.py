@@ -9,6 +9,7 @@ from decimal import Decimal
 import structlog
 
 from citedelta.answer.gate import pre_flight
+from citedelta.answer.intent import Intent, classify
 from citedelta.answer.models import (
     Answer,
     AnswerResult,
@@ -21,6 +22,7 @@ from citedelta.answer.rerank import PassthroughReranker, Reranker
 from citedelta.answer.validator import validate_citations
 from citedelta.retrieve import RetrievalTrace
 from citedelta.temporal import AdmissibleSet
+from citedelta.web.copy import GREETING_REPLY
 from substrate.llm import (
     CompletionError,
     CompletionRequest,
@@ -59,6 +61,21 @@ class AnswerService:
 
         def elapsed() -> float:
             return (time.perf_counter() - started) * 1000
+
+        # A greeting must cost nothing and return instantly. It sits ahead of
+        # the gate rather than after it: running retrieval on "hello" wastes
+        # ~15 ms and produces a meaningless fused score.
+        if classify(trace.query) is Intent.GREETING:
+            log.info("answer.greeting", run_id=run_id)
+            return Refusal(
+                query=trace.query,
+                as_of=trace.as_of,
+                reason=RefusalReason.GREETING,
+                detail=GREETING_REPLY,
+                trace=None,
+                cost_usd=Decimal(0),
+                latency_ms=elapsed(),
+            )
 
         verdict = pre_flight(trace)
         if not verdict.passed:

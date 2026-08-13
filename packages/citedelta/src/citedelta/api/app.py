@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID, uuid4
 
 import structlog
 from fastapi import APIRouter, FastAPI, Form, HTTPException, Request
@@ -17,14 +19,15 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
-from citedelta.answer.models import Answer, Citation
+from citedelta.answer.intent import Intent, classify
+from citedelta.answer.models import Answer, Citation, Refusal, RefusalReason
 from citedelta.api.state import AppState, build_state, close_state
-from citedelta.api.traces import persist
+from citedelta.api.traces import next_turn_index, persist
 from citedelta.bench.temporal import load_admissible
 from citedelta.config import get_settings
 from citedelta.retrieve import RetrievalTrace, hybrid_search
 from citedelta.temporal import AdmissibleSet
-from citedelta.web.copy import REFUSAL_HELP, REFUSAL_LABELS
+from citedelta.web.copy import GREETING_REPLY, REFUSAL_HELP, REFUSAL_LABELS
 from citedelta.web.diff import diff_pair
 from citedelta.web.filters import citation_chips
 from citedelta.web.ribbon import build_ribbon
@@ -55,6 +58,12 @@ class AskRequest(BaseModel):
     query: str = Field(min_length=3, max_length=500)
     as_of: date | None = None
     k: int = Field(default=8, ge=1, le=20)
+    conversation_id: UUID | None = None
+    """Optional thread identity. When absent a fresh conversation starts — the
+    JSON contract's existing callers are unchanged, and every row still lands
+    in a conversation."""
+
+    model_config = {"extra": "forbid"}
 
 
 class AskResponse(BaseModel):
@@ -181,6 +190,39 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
     run_id = new_run_id()
     as_of = body.as_of or datetime.now(UTC).date()
 
+    conversation_id = body.conversation_id or uuid4()
+    turn_index = await next_turn_index(state.db, conversation_id)
+
+    # Intercepting here, ahead of admissible-load and embedding, is what makes
+    # a greeting actually free. AnswerService guards the same case for callers
+    # that reach it directly (the CLI); this is the HTTP path skipping the
+    # work entirely.
+    if classify(body.query) is Intent.GREETING:
+        greeting = Refusal(
+            query=body.query,
+            as_of=as_of.isoformat(),
+            reason=RefusalReason.GREETING,
+            detail=GREETING_REPLY,
+            trace=None,
+            cost_usd=Decimal(0),
+            latency_ms=0.0,
+        )
+        trace_id = await persist(
+            state.db,
+            result=greeting,
+            candidates=[],
+            as_of=as_of,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+        )
+        return {
+            "result": greeting,
+            "candidates": [],
+            "trace_id": trace_id,
+            "selectivity": 0.0,
+        }
+
     with LATENCY.time():
         admissible = await load_admissible(as_of, state.corpus_size, db=state.db)
         # The internal label is "valid_on=YYYY-MM-DD" (benchmark-facing). The
@@ -214,6 +256,9 @@ async def _run_ask(state: AppState, body: AskRequest) -> dict[str, Any]:
             candidates=candidates,
             as_of=as_of,
             run_id=run_id,
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+            resolved_query=body.query,
         )
 
     ASKS.labels(outcome="refused" if result.refused else "answered").inc()

@@ -25,10 +25,12 @@ def _citation(chunk_id: int) -> Citation:
     )
 
 
-def _trace(hits: list[FusedHit] | None = None) -> RetrievalTrace:
+def _trace(
+    hits: list[FusedHit] | None = None, *, query: str = "What is the F-1 grace period?"
+) -> RetrievalTrace:
     hits = hits if hits is not None else [FusedHit(1, 0.03, {"lexical": 1})]
     return RetrievalTrace(
-        query="What is the F-1 grace period?",
+        query=query,
         as_of="2026-08-11",
         selectivity=0.02,
         candidates_lexical=50,
@@ -94,6 +96,18 @@ async def test_fabricated_citation_destroys_the_answer() -> None:
     assert isinstance(result, Refusal)
     assert result.reason is RefusalReason.FABRICATED_CITATION
     assert not hasattr(result, "text")
+
+
+@pytest.mark.asyncio
+async def test_greeting_short_circuits_before_any_model_call() -> None:
+    fake = FakeCompletions()  # no scripted response: a call would raise
+    result = await _service(fake).answer(
+        trace=_trace(query="hello"), candidates=[_citation(1)], admissible=_admissible({1})
+    )
+    assert isinstance(result, Refusal)
+    assert result.reason is RefusalReason.GREETING
+    assert fake.calls == []
+    assert result.cost_usd == Decimal(0)
 
 
 @pytest.mark.asyncio

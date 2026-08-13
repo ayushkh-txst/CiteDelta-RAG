@@ -91,9 +91,10 @@ async def test_a_row_cannot_be_both_answer_and_refusal(clean_db: Database) -> No
                 """INSERT INTO query_traces
                    (run_id, query, as_of, selectivity, candidates_lexical,
                     candidates_vector, candidates, answer, refusal_reason,
-                    latency_ms)
+                    latency_ms, conversation_id, turn_index)
                    VALUES ('r','q','2026-01-01',0.1,0,0,'[]'::jsonb,
-                           'an answer','also_refused',1.0)"""
+                           'an answer','also_refused',1.0,
+                           gen_random_uuid(), 0)"""
             )
 
 

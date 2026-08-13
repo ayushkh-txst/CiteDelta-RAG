@@ -10,6 +10,7 @@ __pycache__/
 
 # secrets and local config
 .env
+.claude/
 
 # generated data — regenerable from the eCFR API, so never committed
 data/

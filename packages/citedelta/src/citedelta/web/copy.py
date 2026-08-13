@@ -12,6 +12,14 @@ from __future__ import annotations
 
 from markupsafe import Markup
 
+GREETING_REPLY = (
+    "Doing well — ready when you are. I answer questions about **8 CFR Part "
+    "214**, the rules for nonimmigrant classes: F-1 student status, practical "
+    "training, transfers, grace periods. I can answer as the regulation stood "
+    "on any date since December 2016, so if you filed something in 2019, ask "
+    "me about 2019."
+)
+
 REFUSAL_LABELS = {
     "no_admissible_source": "No admissible source",
     "low_confidence": "No close match",
