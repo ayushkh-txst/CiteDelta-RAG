@@ -6,6 +6,7 @@
   <input type="hidden" name="conversation_id" value="{{ conversation_id }}">
   <div class="composer-inner">
     <button class="asof" type="button" data-asof-open
+            data-asof-min="{{ corpus_since }}" data-asof-max="{{ today }}"
             aria-label="Change the date answers are based on">
       <span class="k">as of</span>
       <span class="v">{{ as_of_label }}</span>

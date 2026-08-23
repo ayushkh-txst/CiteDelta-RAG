@@ -331,6 +331,21 @@ table.trace td.p { font-family: var(--mono); font-size: 11.5px; }
 }
 .cmp-chip:hover { border-color: var(--signal); color: var(--signal); background: var(--signal-bg); }
 .cmp-chip.other { color: var(--muted); border-style: dashed; }
+.cmp-select {
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+  background: transparent; border: 1px solid var(--rule); border-radius: 2px;
+  padding: 5px 8px; cursor: pointer;
+}
+.cmp-select:hover { border-color: var(--signal); }
+/* The "Compare" button and its dropdown both go inert while a comparison is
+   in flight, so a second click can't fire a second full pair of retrieval +
+   generation runs while the first is still working. */
+.cmp-go { display: inline-flex; align-items: center; gap: var(--s2); }
+.cmp-go:disabled, .cmp-select:disabled { opacity: .5; cursor: default; }
+.cmp-indicator { animation: pulse 1.1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .cmp-indicator { animation: none; }
+}
 
 /* ── Compare turn ─────────────────────────────────────────────────── */
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); }

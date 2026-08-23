@@ -7,18 +7,24 @@
     side. These are the dates the cited provisions actually changed — comparing
     against any other date would give you the same answer twice.
   </p>
-  <div class="cmp-row">
+  <form class="cmp-row" data-compare-form
+        hx-post="/ui/compare" hx-target="#transcript" hx-swap="beforeend"
+        hx-disabled-elt="find button, find select"
+        hx-indicator="find .cmp-indicator">
+    <input type="hidden" name="query" value="{{ turn.resolved_query or turn.question }}">
+    <input type="hidden" name="right" value="{{ turn.as_of.isoformat() }}">
     <span class="cmp-anchor">{{ turn.as_of.strftime('%-d %b %Y') }} vs</span>
-    {% for d in options %}
-      <button class="cmp-chip" type="button"
-              hx-post="/ui/compare" hx-target="#transcript" hx-swap="beforeend"
-              hx-vals='{"query": {{ (turn.resolved_query or turn.question) | tojson }},
-                        "left": "{{ d.isoformat() }}",
-                        "right": "{{ turn.as_of.isoformat() }}"}'>
-        {{ d.strftime('%-d %b %Y') }}
-      </button>
-    {% endfor %}
-    <button class="cmp-chip other" type="button" data-compare-other>another date…</button>
-  </div>
+    <select name="left" class="cmp-select" required data-compare-select aria-label="Compare against">
+      <option value="" disabled selected>choose a date…</option>
+      {% for d in options %}
+        <option value="{{ d.isoformat() }}">{{ d.strftime('%-d %b %Y') }}</option>
+      {% endfor %}
+      <option value="__other__" data-compare-other>another date…</option>
+    </select>
+    <button class="cmp-chip cmp-go" type="submit">
+      <span class="mk cmp-indicator htmx-indicator">▸</span>
+      Compare
+    </button>
+  </form>
 </details>
 {% endif %}

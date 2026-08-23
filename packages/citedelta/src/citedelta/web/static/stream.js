@@ -20,7 +20,18 @@ function citedeltaStream(el) {
 
   src.addEventListener('done', (e) => {
     src.close();
-    el.outerHTML = JSON.parse(e.data);
+    // Swap in the finished turn. We insert the nodes ourselves rather than
+    // through htmx, so htmx never sees them — its own `hx-post` controls inside
+    // the turn (Sources, Compare across dates) would be left uninitialised and
+    // do nothing on click. Re-run htmx.process on each inserted element so those
+    // controls work.
+    const tpl = document.createElement('template');
+    tpl.innerHTML = JSON.parse(e.data);
+    const added = Array.from(tpl.content.childNodes);
+    el.replaceWith(tpl.content);
+    added.forEach((n) => {
+      if (n.nodeType === 1) window.htmx?.process(n);
+    });
     document.querySelector('[data-composer] input')?.focus();
   });
 
