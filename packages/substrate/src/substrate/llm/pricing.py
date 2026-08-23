@@ -61,6 +61,29 @@ RATES: tuple[Rate, ...] = (
     ),
     Rate("claude-sonnet-5", Decimal("3.00"), Decimal("15.00"), date(2026, 9, 1)),
     Rate("claude-haiku-4-5", Decimal("1.00"), Decimal("5.00"), date(2026, 1, 1)),
+    # `:free` is OpenRouter's own promise of $0, not an absence of data — the
+    # zero here is asserted the same way every other rate is, so a rotation
+    # off the free tier shows up as UnknownRate rather than a silent $0.
+    Rate(
+        "google/gemma-4-26b-a4b-it:free",
+        Decimal("0.00"),
+        Decimal("0.00"),
+        date(2026, 4, 3),
+    ),
+    Rate(
+        "google/gemma-4-26b-a4b-it",
+        Decimal("0.10"),
+        Decimal("0.30"),
+        date(2026, 4, 3),
+    ),
+    # Embedding calls never carry output tokens, so output_per_mtok is a
+    # rate that's never actually charged — present for shape, not billed.
+    Rate(
+        "openai/text-embedding-3-small@512",
+        Decimal("0.02"),
+        Decimal("0.00"),
+        date(2025, 10, 30),
+    ),
 )
 
 

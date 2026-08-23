@@ -9,14 +9,15 @@ import structlog
 
 from citedelta.answer.service import AnswerService
 from citedelta.config import Settings
-from citedelta.embed.local import LocalEmbeddings
+from citedelta.embed.base import EmbeddingProvider
+from citedelta.embed.openrouter import default_provider
 from citedelta.index.brute import BruteForceIndex
 from citedelta.index.build import LEXICAL_INDEX_FILENAME
 from citedelta.index.lexical import LexicalIndex
 from citedelta.index.vector import VectorIndex
 from substrate.db import Database
 from substrate.llm import Completions
-from substrate.llm.anthropic_adapter import AnthropicCompletions
+from substrate.llm.factory import build_completions
 from substrate.llm.pricing import CostLedger
 
 log = structlog.get_logger(__name__)
@@ -27,9 +28,10 @@ class AppState:
     db: Database
     lexical: LexicalIndex
     vector: VectorIndex
-    embeddings: LocalEmbeddings
+    embeddings: EmbeddingProvider
     answers: AnswerService
     resolver_llm: Completions
+    resolver_model: str
     ledger: CostLedger
     corpus_size: int
     corpus_since: date
@@ -76,7 +78,9 @@ async def build_state(settings: Settings) -> AppState:
         amendments=len(amendment_dates),
     )
 
-    ids, vectors = await load_corpus_vectors()
+    embeddings = default_provider(settings)
+
+    ids, vectors = await load_corpus_vectors(model_id=embeddings.model_id)
     log.info("api.vectors_loaded", count=len(ids), mb=round(vectors.nbytes / 1e6, 1))
 
     # BruteForceIndex for now: exact, and at 38k vectors it is fast enough
@@ -89,16 +93,17 @@ async def build_state(settings: Settings) -> AppState:
     lexical = LexicalIndex(settings.index_dir / LEXICAL_INDEX_FILENAME)
     lexical.__enter__()
 
-    embeddings = LocalEmbeddings()
-    # Warm the ONNX session so the first real request doesn't pay for it.
-    embeddings.embed(["warmup"])
-
     # One ledger across both models, so a turn's reported cost is the turn's
     # actual cost: resolver + answer land under the same run_id and the total
     # is what gets persisted.
     ledger = CostLedger()
-    llm = AnthropicCompletions(api_key=settings.anthropic_api_key, ledger=ledger)
-    resolver_llm = AnthropicCompletions(api_key=settings.anthropic_api_key, ledger=ledger)
+    api_key = (
+        settings.openrouter_api_key
+        if settings.llm_provider == "openrouter"
+        else settings.anthropic_api_key
+    )
+    llm = build_completions(provider=settings.llm_provider, api_key=api_key, ledger=ledger)
+    resolver_llm = build_completions(provider=settings.llm_provider, api_key=api_key, ledger=ledger)
     answers = AnswerService(llm, model=settings.llm_model, max_tokens=settings.llm_max_tokens)
 
     return AppState(
@@ -108,6 +113,7 @@ async def build_state(settings: Settings) -> AppState:
         embeddings=embeddings,
         answers=answers,
         resolver_llm=resolver_llm,
+        resolver_model=settings.resolver_model,
         ledger=ledger,
         corpus_size=len(ids),
         corpus_since=corpus_since,

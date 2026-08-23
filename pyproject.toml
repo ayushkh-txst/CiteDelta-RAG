@@ -75,6 +75,13 @@ files = [
 module = ["asyncpg.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# Optional extra (citedelta[local-embeddings]) — not installed by default
+# now that embeddings run through OpenRouter (ADR-0023), so no stub is
+# present in the default dev environment.
+module = ["fastembed.*"]
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------- pytest
 
 [tool.pytest.ini_options]

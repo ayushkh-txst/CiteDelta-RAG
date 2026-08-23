@@ -113,17 +113,20 @@ def embed_run(batch_size: int = typer.Option(64, "--batch-size")) -> None:
 @embed_app.command("status")
 def embed_status() -> None:
     """How much of the corpus is embedded."""
+    from citedelta.embed.openrouter import default_provider
     from substrate.db import Database
 
     async def main() -> None:
-        async with Database.open(get_settings().database_url) as db, db.acquire() as conn:
+        settings = get_settings()
+        model_id = default_provider(settings).model_id
+        async with Database.open(settings.database_url) as db, db.acquire() as conn:
             row = await conn.fetchrow(
                 """
                 SELECT (SELECT count(*) FROM chunks)                          AS chunks,
                        (SELECT count(DISTINCT content_sha256) FROM chunks)    AS distinct_texts,
                        (SELECT count(*) FROM embeddings WHERE model_id = $1)  AS embedded
                 """,
-                "BAAI/bge-small-en-v1.5",
+                model_id,
             )
             done, total = int(row["embedded"]), int(row["distinct_texts"])
             typer.echo(
@@ -165,7 +168,7 @@ def vector_search(
     import time
 
     from citedelta.embed.corpus import load_corpus_vectors
-    from citedelta.embed.local import LocalEmbeddings
+    from citedelta.embed.openrouter import default_provider
     from citedelta.index.brute import BruteForceIndex
     from citedelta.index.vector import BoolMask
     from citedelta.ingest import EXTERNAL_ID
@@ -173,10 +176,12 @@ def vector_search(
     from citedelta.temporal import AdmissibleSet, AsOf
     from substrate.db import Database
 
-    configure_logging(get_settings().log_level)
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    embeddings = default_provider(settings)
 
     async def main() -> None:
-        ids, vectors = await load_corpus_vectors()
+        ids, vectors = await load_corpus_vectors(model_id=embeddings.model_id)
         index = BruteForceIndex()
         index.build(ids, vectors)
 
@@ -197,7 +202,7 @@ def vector_search(
                 )
                 mask = index.compile_filter(adm.ids)
 
-            q = LocalEmbeddings().embed([query])[0]
+            q = embeddings.embed([query])[0]
             t0 = time.perf_counter()
             hits = index.search(q, k, admissible=mask)
             elapsed = (time.perf_counter() - t0) * 1000
@@ -459,7 +464,7 @@ def ask(
 
     from citedelta.bench.temporal import load_admissible
     from citedelta.embed.corpus import load_corpus_vectors
-    from citedelta.embed.local import LocalEmbeddings
+    from citedelta.embed.openrouter import default_provider
     from citedelta.index.brute import BruteForceIndex
     from citedelta.index.build import LEXICAL_INDEX_FILENAME
     from citedelta.index.lexical import LexicalIndex
@@ -469,13 +474,14 @@ def ask(
     settings = get_settings()
     configure_logging(settings.log_level)
     point = date.fromisoformat(as_of) if as_of else datetime.now(UTC).date()
+    embeddings = default_provider(settings)
 
     async def main() -> None:
-        ids, vectors = await load_corpus_vectors()
+        ids, vectors = await load_corpus_vectors(model_id=embeddings.model_id)
         vector_index = BruteForceIndex()
         vector_index.build(ids, vectors)
         admissible = await load_admissible(point, len(ids))
-        query_vector = LocalEmbeddings().embed([query])[0]
+        query_vector = embeddings.embed([query])[0]
 
         with LexicalIndex(settings.index_dir / LEXICAL_INDEX_FILENAME) as lexical:
             trace = hybrid_search(
@@ -513,7 +519,7 @@ def ask(
 
         from citedelta.answer.models import Citation
         from citedelta.answer.service import AnswerService
-        from substrate.llm.anthropic_adapter import AnthropicCompletions
+        from substrate.llm.factory import build_completions
 
         candidates = [
             Citation(
@@ -529,16 +535,22 @@ def ask(
             if h.chunk_id in rows
         ]
 
-        if not settings.anthropic_api_key:
+        api_key = (
+            settings.openrouter_api_key
+            if settings.llm_provider == "openrouter"
+            else settings.anthropic_api_key
+        )
+        if not api_key:
             typer.secho(
-                "No anthropic_api_key in .env — showing retrieved chunks only.",
+                f"No API key for provider {settings.llm_provider!r} in .env — "
+                "showing retrieved chunks only.",
                 fg=typer.colors.YELLOW,
             )
             for c in candidates:
                 typer.echo(f"[{c.chunk_id}] {c.citation_path}  ({c.in_force_label})")
             return
 
-        llm = AnthropicCompletions(api_key=settings.anthropic_api_key)
+        llm = build_completions(provider=settings.llm_provider, api_key=api_key)
         service = AnswerService(llm, model=settings.llm_model)
         result = await service.answer(trace=trace, candidates=candidates, admissible=admissible)
 
@@ -557,8 +569,11 @@ def ask(
 
 @app.command("serve")
 def serve(
-    host: str = typer.Option("127.0.0.1", "--host"),
-    port: int = typer.Option(8000, "--port"),
+    host: str = typer.Option("127.0.0.1", "--host", envvar="HOST"),
+    # HF Spaces (and most PaaS free tiers) inject $PORT and expect the
+    # container to bind it — the CLI flag alone left every such host needing
+    # a wrapper script just to pass the value through.
+    port: int = typer.Option(8000, "--port", envvar="PORT"),
     reload: bool = typer.Option(False, "--reload"),
 ) -> None:
     """Run the HTTP API."""

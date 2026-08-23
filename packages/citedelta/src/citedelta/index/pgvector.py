@@ -40,7 +40,7 @@ class PgVectorIndex:
         self._probe = probe
         self._conn = psycopg.connect(dsn, autocommit=True)
         self._ids: Ids = np.empty(0, dtype=np.int64)
-        self._dim = 384
+        self._dim = 512  # placeholder — build() overwrites with vectors.shape[1]
 
     @property
     def name(self) -> str:

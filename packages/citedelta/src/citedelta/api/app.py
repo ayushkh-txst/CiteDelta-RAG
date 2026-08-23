@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid4
 
+import anyio.to_thread
 import structlog
 from fastapi import APIRouter, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -168,7 +169,10 @@ async def search(body: AskRequest, request: Request) -> SearchResponse:
     state = ctx(request)
     as_of = body.as_of or datetime.now(UTC).date()
     admissible = await load_admissible(as_of, state.corpus_size, db=state.db)
-    query_vector = state.embeddings.embed([body.query])[0]
+    # embed() is a blocking network call now that it goes through OpenRouter
+    # (it was in-process ONNX inference before) — off the event loop so one
+    # slow embedding call doesn't stall every other concurrent request.
+    query_vector = (await anyio.to_thread.run_sync(state.embeddings.embed, [body.query]))[0]
     trace = hybrid_search(
         body.query,
         query_vector,
@@ -275,6 +279,7 @@ async def _run_ask(
         corpus_since=state.corpus_since,
         today=datetime.now(UTC).date(),
         run_id=run_id,
+        model=state.resolver_model,
     )
     as_of = resolution.as_of or requested_as_of
     search_text = resolution.standalone_question
@@ -290,7 +295,7 @@ async def _run_ask(
             label=as_of.isoformat(),
             corpus_size=admissible.corpus_size,
         )
-        query_vector = state.embeddings.embed([search_text])[0]
+        query_vector = (await anyio.to_thread.run_sync(state.embeddings.embed, [search_text]))[0]
         trace = hybrid_search(
             search_text,
             query_vector,

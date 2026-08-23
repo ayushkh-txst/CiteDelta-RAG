@@ -261,7 +261,6 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi" },
-    { name = "fastembed" },
     { name = "greenlet" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -278,12 +277,17 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
+[package.optional-dependencies]
+local-embeddings = [
+    { name = "fastembed" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14" },
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "fastembed", specifier = ">=0.8.0" },
+    { name = "fastembed", marker = "extra == 'local-embeddings'", specifier = ">=0.8.0" },
     { name = "greenlet", specifier = ">=3.1" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "jinja2", specifier = ">=3.1" },
@@ -299,6 +303,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.15" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
+provides-extras = ["local-embeddings"]
 
 [[package]]
 name = "citedelta-workspace"
@@ -2072,6 +2077,7 @@ source = { editable = "packages/substrate" }
 dependencies = [
     { name = "anthropic" },
     { name = "asyncpg" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "structlog" },
 ]
@@ -2080,6 +2086,7 @@ dependencies = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.121" },
     { name = "asyncpg", specifier = ">=0.30" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "structlog", specifier = ">=24.4" },
 ]

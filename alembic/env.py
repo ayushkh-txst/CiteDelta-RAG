@@ -13,7 +13,15 @@ from citedelta.config import get_settings
 config = context.config
 
 # database where, from Settings so it stays in one place.
-config.set_main_option("sqlalchemy.url", get_settings().sqlalchemy_url)
+settings = get_settings()
+# `%` doubled: alembic's Config stores this in a stdlib ConfigParser, whose
+# default interpolation treats a bare `%` as the start of a %(name)s
+# reference. A password containing a URL-escaped character (e.g. `%40` for
+# `@`) then raises "invalid interpolation syntax" before any connection is
+# attempted — confirmed live against a Supabase-generated password. This is
+# ConfigParser's own quoting rule, not something `sqlalchemy_url` should
+# know about.
+config.set_main_option("sqlalchemy.url", settings.sqlalchemy_url.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -70,6 +78,7 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=settings.sqlalchemy_connect_args,
     )
 
     async with connectable.connect() as connection:

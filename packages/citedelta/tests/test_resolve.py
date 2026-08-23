@@ -75,7 +75,7 @@ async def test_followup_gains_a_subject_and_a_date() -> None:
 
 
 @pytest.mark.asyncio
-async def test_uses_the_cheap_model() -> None:
+async def test_uses_the_cheap_model_by_default() -> None:
     fake = FakeCompletions(responses=[_says(is_followup=True, standalone_question="x", as_of="")])
     await resolve_followup(
         fake,
@@ -86,6 +86,24 @@ async def test_uses_the_cheap_model() -> None:
         today=TODAY,
     )
     assert fake.last.model == "claude-haiku-4-5"
+
+
+@pytest.mark.asyncio
+async def test_model_is_overridable_so_deployments_can_switch_providers() -> None:
+    """Anthropic and OpenRouter deployments each want their own cheap model
+    for this call — a hardcoded constant would force one provider's naming
+    on both."""
+    fake = FakeCompletions(responses=[_says(is_followup=True, standalone_question="x", as_of="")])
+    await resolve_followup(
+        fake,
+        question="what about then?",
+        history=_history(),
+        current_as_of=TODAY,
+        corpus_since=SINCE,
+        today=TODAY,
+        model="google/gemma-4-26b-a4b-it:free",
+    )
+    assert fake.last.model == "google/gemma-4-26b-a4b-it:free"
 
 
 @pytest.mark.asyncio

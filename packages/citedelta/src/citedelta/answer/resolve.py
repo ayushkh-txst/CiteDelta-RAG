@@ -124,6 +124,7 @@ async def resolve_followup(
     corpus_since: date,
     today: date,
     run_id: str = "adhoc",
+    model: str = RESOLVER_MODEL,
 ) -> Resolution:
     """No history means nothing to resolve — return the question untouched
     without spending a call. The first turn of every conversation takes this
@@ -141,7 +142,7 @@ async def resolve_followup(
 
     response = await llm.complete(
         CompletionRequest(
-            model=RESOLVER_MODEL,
+            model=model,
             system=SYSTEM,
             messages=(Message(Role.USER, user),),
             max_tokens=400,

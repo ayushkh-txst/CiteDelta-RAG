@@ -68,3 +68,19 @@ def test_sub_cent_costs_survive_rounding() -> None:
     cost = price(usage, model="claude-opus-5", when=date(2026, 8, 11))
     assert cost > Decimal(0)
     assert cost < Decimal("0.02")
+
+
+def test_free_openrouter_model_is_an_asserted_zero() -> None:
+    """The `:free` suffix is OpenRouter's own promise of $0 — a rate row that
+    says so explicitly, not an UnknownRate silently defaulted to nothing."""
+    usage = TokenUsage(input_tokens=1_000_000, output_tokens=1_000_000)
+    cost = price(usage, model="google/gemma-4-26b-a4b-it:free", when=date(2026, 8, 23))
+    assert cost == Decimal("0.000000")
+
+
+def test_openrouter_embedding_model_has_no_output_price() -> None:
+    """Embedding calls never produce output tokens, but the rate row still
+    needs an output_per_mtok — zero, since none is ever billed."""
+    usage = TokenUsage(input_tokens=1_000_000)
+    cost = price(usage, model="openai/text-embedding-3-small@512", when=date(2026, 8, 23))
+    assert cost == Decimal("0.020000")

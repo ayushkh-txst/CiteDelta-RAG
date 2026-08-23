@@ -9,7 +9,7 @@ import structlog
 
 from citedelta.config import get_settings
 from citedelta.embed.base import EmbeddingProvider, Vectors
-from citedelta.embed.local import LocalEmbeddings
+from citedelta.embed.openrouter import default_provider
 from substrate.db import Database
 
 log = structlog.get_logger(__name__)
@@ -43,7 +43,7 @@ async def embed_corpus(
     process, and it is ALREADY resumable — the cache table is the checkpoint.
     """
     settings = get_settings()
-    provider = provider or LocalEmbeddings()
+    provider = provider or default_provider(settings)
     stats = EmbedStats()
 
     async with Database.open(settings.database_url) as db:
@@ -120,7 +120,7 @@ async def embed_corpus(
 
 
 async def load_corpus_vectors(
-    model_id: str = "BAAI/bge-small-en-v1.5",
+    model_id: str | None = None,
 ) -> tuple[np.ndarray, Vectors]:
     """Every chunk's id and vector, aligned row-for-row.
 
@@ -128,8 +128,15 @@ async def load_corpus_vectors(
     vectors appear repeatedly. That is correct: each chunk is a separately
     citable unit with its own validity interval, and the temporal filter has
     to be able to reach every one of them.
+
+    `model_id=None` resolves to whatever the deployment is currently
+    configured for (`default_provider(settings).model_id`), so the many call
+    sites that just want "the current corpus" don't each have to know the
+    embedding config.
     """
     settings = get_settings()
+    if model_id is None:
+        model_id = default_provider(settings).model_id
     async with Database.open(settings.database_url) as db, db.acquire() as conn:
         rows = await conn.fetch(
             """

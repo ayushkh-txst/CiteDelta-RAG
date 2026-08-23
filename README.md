@@ -133,11 +133,15 @@ make up && make sync
 uv run alembic upgrade head
 uv run citedelta plan && uv run citedelta work -c 2
 uv run citedelta index build
+uv run citedelta embed run
 uv run citedelta search "optional practical training stem extension"
 ```
 
-Set `anthropic_api_key` in `.env` for generated answers; without it, retrieval
-still works and returns ranked passages.
+Set `openrouter_api_key` in `.env` for generated answers and embeddings —
+both go through OpenRouter (ADR-0023) rather than a separate key per vendor.
+Without it, retrieval still works using pre-embedded vectors, but `embed run`
+and `ask` cannot reach a model. `llm_provider` can be switched back to
+`anthropic` (with `anthropic_api_key` set) if you'd rather run against Claude.
 
 ## Docs
 

@@ -12,13 +12,29 @@ import asyncpg
 
 
 async def _init_connection(conn: asyncpg.Connection[Any]) -> None:
-    """Make jsonb round-trip as dict instead of str."""
+    """Make jsonb round-trip as dict instead of str.
+
+    Also pin search_path explicitly. Every query in this codebase uses
+    unqualified table names (`SELECT ... FROM chunks`, etc.), which
+    resolves against whatever search_path the backend happens to have. A
+    transaction-mode PgBouncer/Supavisor (Supabase's pooler, among others)
+    can hand the same physical backend to a different logical client
+    between transactions — if any of them ever runs `SET search_path=''`
+    (which is exactly what pg_dump's restore output does, as a hijacking
+    guard), that setting can persist for whoever gets the backend next,
+    turning every unqualified reference into UndefinedTableError. Confirmed
+    live: a `psql`-driven corpus restore against Supabase's transaction
+    pooler broke this pool's own queries afterward. Setting search_path on
+    every new connection this pool creates makes it resilient regardless of
+    what any other client did to a shared backend first.
+    """
     await conn.set_type_codec(
         "jsonb",
         encoder=json.dumps,
         decoder=json.loads,
         schema="pg_catalog",
     )
+    await conn.execute("SET search_path TO public")
 
 
 class Database:
@@ -46,6 +62,16 @@ class Database:
             max_size=self._max_size,
             init=_init_connection,
             command_timeout=60,
+            # asyncpg caches prepared statements per physical connection by
+            # default. Under a transaction/statement-mode PgBouncer (Supabase's
+            # pooler, among others) a physical connection is handed to a
+            # different logical client between statements, so a cached
+            # statement from one client collides with another's — asyncpg
+            # raises DuplicatePreparedStatementError. Disabling the cache
+            # costs a bit of re-planning per query; that's cheaper than a
+            # deployment-specific footgun, and correct against a direct
+            # connection too, just without the (usually negligible) caching win.
+            statement_cache_size=0,
         )
 
     async def close(self) -> None:

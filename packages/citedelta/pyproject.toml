@@ -14,7 +14,6 @@ dependencies = [
     "sqlalchemy>=2.0",
     "structlog>=24.4",
     "typer>=0.15",
-    "fastembed>=0.8.0",
     "numpy>=2.5.1",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -23,6 +22,12 @@ dependencies = [
     "python-multipart>=0.0.9",
     "psycopg[binary]>=3.2",
 ]
+
+[project.optional-dependencies]
+# Not needed to serve the app (embeddings run through OpenRouter — see
+# ADR-0023). Kept for the recall benchmark, which wants a deterministic,
+# offline embedding model (ADR-0005) rather than a hosted one.
+local-embeddings = ["fastembed>=0.8.0"]
 
 [project.scripts]
 citedelta = "citedelta.cli:app"
