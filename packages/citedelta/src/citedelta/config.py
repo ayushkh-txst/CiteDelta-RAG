@@ -32,11 +32,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""
 
-    llm_model: str = "google/gemma-4-26b-a4b-it:free"
-    resolver_model: str = "google/gemma-4-26b-a4b-it:free"
-    """Deliberately not the answer model — see answer/resolve.py. Kept as its
-    own setting rather than derived from llm_model so a deployment can pick a
-    cheaper resolver even when it upgrades the answer model."""
+    llm_model: str = "openai/gpt-5.6-luna"
+    resolver_model: str = "openai/gpt-5.6-luna"
+    """Not `google/gemma-4-26b-a4b-it:free`: that model's shared upstream
+    pool (Google AI Studio) hit sustained 429s in production on 2026-08-23,
+    confirmed via direct calls to OpenRouter's API. `gpt-5.6-luna` is paid
+    but cheap (~$0.001/turn, no shared free-tier congestion) — see
+    ADR-0023's update. Kept as its own setting rather than derived from
+    llm_model so a deployment can pick a cheaper resolver even when it
+    upgrades the answer model — see answer/resolve.py."""
 
     # Verbatim quotes made answers longer: a two-citation answer now carries a
     # full clause per citation, and 2048 output tokens truncated the JSON mid

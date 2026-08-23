@@ -76,6 +76,25 @@ RATES: tuple[Rate, ...] = (
         Decimal("0.30"),
         date(2026, 4, 3),
     ),
+    # Fallback free model — gemma's upstream shared pool (Google AI Studio)
+    # hit sustained 429s in production on 2026-08-23, confirmed via direct
+    # calls to OpenRouter's API rather than assumed from a support message.
+    Rate(
+        "liquid/lfm-2.5-2.6b:free",
+        Decimal("0.00"),
+        Decimal("0.00"),
+        date(2026, 8, 23),
+    ),
+    # Paid fallback, adopted the same day for the same reason: no shared
+    # free-tier pool to get congested, at a few cents per 1,000 turns.
+    # Verified against OpenRouter's own /models pricing (below the
+    # >272k-input-token override tier, which doesn't apply here).
+    Rate(
+        "openai/gpt-5.6-luna",
+        Decimal("0.20"),
+        Decimal("1.20"),
+        date(2026, 8, 23),
+    ),
     # Embedding calls never carry output tokens, so output_per_mtok is a
     # rate that's never actually charged — present for shape, not billed.
     Rate(

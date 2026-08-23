@@ -84,3 +84,19 @@ def test_openrouter_embedding_model_has_no_output_price() -> None:
     usage = TokenUsage(input_tokens=1_000_000)
     cost = price(usage, model="openai/text-embedding-3-small@512", when=date(2026, 8, 23))
     assert cost == Decimal("0.020000")
+
+
+def test_liquid_lfm_free_model_is_an_asserted_zero() -> None:
+    """A fallback free model, tried when gemma's shared upstream pool is
+    congested (confirmed live against OpenRouter on 2026-08-23)."""
+    usage = TokenUsage(input_tokens=1_000_000, output_tokens=1_000_000)
+    cost = price(usage, model="liquid/lfm-2.5-2.6b:free", when=date(2026, 8, 23))
+    assert cost == Decimal("0.000000")
+
+
+def test_gpt_5_6_luna_pricing() -> None:
+    """Paid fallback — no shared-pool congestion, a few cents per 1,000
+    turns. Rate verified against OpenRouter's own /models pricing."""
+    usage = TokenUsage(input_tokens=1_000_000, output_tokens=1_000_000)
+    cost = price(usage, model="openai/gpt-5.6-luna", when=date(2026, 8, 23))
+    assert cost == Decimal("1.400000")
