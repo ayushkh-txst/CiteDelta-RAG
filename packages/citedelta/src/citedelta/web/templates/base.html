@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- A private demo, discoverable only by link — never by search. Belt-
+       and-braces with robots.txt and the X-Robots-Tag header set in
+       api/app.py's create_app(). -->
+  <meta name="robots" content="noindex, nofollow">
   <title>{% block title %}CiteDelta{% endblock %}</title>
 
   <!-- Preload the two faces that render above the fold. The mono stamps are

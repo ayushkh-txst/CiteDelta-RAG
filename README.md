@@ -4,6 +4,12 @@ Bitemporal hybrid search over US immigration regulations. Ask a question, get an
 answer with citations you can verify — **as the regulation stood on any date
 since 2016**.
 
+**Live:** [citedelta.onrender.com](https://citedelta.onrender.com) — free
+hosting on Render + Supabase, LLM and embeddings via OpenRouter (see
+[ADR-0023](docs/design/06-decisions/ADR-0023.md) and
+[docs/deploy/free-hosting.md](docs/deploy/free-hosting.md)). Not search-indexed
+on purpose — link-only.
+
 ![The conversation, with the temporal gutter and the rupture](docs/images/conversation.png)
 
 Every index, the queue, the fusion, and the temporal filtering are hand-written.
@@ -23,21 +29,25 @@ No vector database, no LangChain, no ORM.
 
 ## Try it
 
+Use the [live demo](https://citedelta.onrender.com), or run it locally:
+
 ```bash
 uv run citedelta serve
 open http://127.0.0.1:8000
 ```
 
 The canonical demo query is **"Can an F-1 student transfer to another school?"**
-compared across two dates — the transfer procedure was rewritten in the 2020s to
-require the SEVIS transfer-release-date process and successor-form language:
+— the transfer procedure was rewritten more than once since 2016 to require the
+SEVIS transfer-release-date process and successor-form language. Ask it, then
+open **Compare across dates** under the answer: the dropdown offers exactly the
+dates the *cited* provisions changed (comparing against any other date would
+return the same answer twice), and "another date…" opens a picker for anything
+back to 2016-12-23.
 
-- [`/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11`](http://127.0.0.1:8000/compare?query=Can%20an%20F-1%20student%20transfer%20to%20another%20school%3F&left=2016-12-31&right=2026-08-11)
-
-The 2016 answer describes a simple notification-and-I-20 procedure; the 2026
-answer runs through the transfer-out / transfer-in release-date sequence and the
-15-day contact rule. The `<del>` / `<ins>` highlight is the bitemporal schema
-rendered as text.
+Comparing against an earlier snapshot shows a simpler notification-and-I-20
+procedure, predating the transfer-out / transfer-in release-date sequence and
+the successor-form language. The `<del>` / `<ins>` highlight is the bitemporal
+schema rendered as text.
 
 ## Background
 
@@ -112,12 +122,23 @@ at minimal effort. The benchmarks include a deliberately hard synthetic dataset
 so the accuracy/speed tradeoff is visible at all. Methodology and full numbers:
 [docs/design/03-benchmarks.md](docs/design/03-benchmarks.md).
 
+*The benchmark numbers on this page (recall, QPS, latency, intrinsic
+dimensionality) were measured against the original local 384-dim bge-small
+embeddings ([ADR-0005](docs/design/06-decisions/ADR-0005.md)). Production now
+embeds via OpenRouter's 512-dim `text-embedding-3-small`
+([ADR-0023](docs/design/06-decisions/ADR-0023.md)) for free hosting — the index
+architecture is unchanged, but these specific numbers haven't been re-measured
+against it yet.*
+
 ## Numbers
 
-- Corpus: 38,211 chunks, 147 section versions, 79 snapshot dates (2016→2026)
+Corpus and index architecture (see the caveat above on which of these were
+measured against the original local embeddings, not the current production ones):
+
+- Corpus: 38,828 chunks, 149 section versions, 79 snapshot dates (2016→2026)
 - Lexical index: 6.5 MB; varint + delta-gap encoding cuts postings 3.8×
 - Search latency: p50 5.2 ms · p95 8.9 ms · p99 9.0 ms
-- Embedded corpus: 1,761 distinct texts, 21.7× dedup, intrinsic dim 1.1
+- Embedded corpus: 1,771 distinct texts, 21.9× dedup, intrinsic dim 1.1
 - ANN: brute 887 QPS / IVF-Flat 24,120 QPS @ 0.992 / HNSW 1.0 recall (dedup)
 - Temporal pushdown: recall 0.020 → 0.949 (IVF) at 1.91% selectivity; filtered
   lexical *faster* than unfiltered (5.4 ms vs 21.0 ms)
@@ -134,7 +155,7 @@ uv run alembic upgrade head
 uv run citedelta plan && uv run citedelta work -c 2
 uv run citedelta index build
 uv run citedelta embed run
-uv run citedelta search "optional practical training stem extension"
+uv run citedelta vector search "optional practical training stem extension"
 ```
 
 Set `openrouter_api_key` in `.env` for generated answers and embeddings —

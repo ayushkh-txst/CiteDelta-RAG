@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import anyio.to_thread
 import structlog
 from fastapi import APIRouter, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
@@ -139,6 +139,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def ctx(request: Request) -> AppState:
     return cast(AppState, request.app.state.ctx)
+
+
+@router.get("/robots.txt", response_class=PlainTextResponse)
+async def robots() -> str:
+    """This is a private demo, not a public product — discoverable only by
+    whoever has the link, never by a search engine. Belt-and-braces with the
+    `X-Robots-Tag` header set in `create_app()`: robots.txt stops a compliant
+    crawler from fetching the site at all, the header stops a page from being
+    indexed even if some other site links to it and a crawler ignores this."""
+    return "User-agent: *\nDisallow: /\n"
 
 
 @router.get("/healthz")
@@ -790,6 +800,17 @@ def create_app() -> FastAPI:
     app = FastAPI(title="CiteDelta", lifespan=lifespan)
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
+
+    @app.middleware("http")
+    async def add_robots_header(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Set on every response, not just HTML pages — an API response
+        # linked to directly (or a static asset) shouldn't end up indexed
+        # either. See robots.txt's docstring for the two-layer reasoning.
+        response = await call_next(request)
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        return response
 
     @app.exception_handler(CompletionError)
     async def completion_error_handler(request: Request, exc: CompletionError) -> Response:
